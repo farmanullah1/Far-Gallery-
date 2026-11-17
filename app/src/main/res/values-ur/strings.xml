@@ -1,0 +1,87 @@
+<resources>
+    <string name="app_name">Far Gallery</string>
+    <string name="camera_name">Far Camera</string>
+    <string name="files_name">Far Files</string>
+
+    <!-- Shortcuts -->
+    <string name="shortcut_camera_short">کیمرہ</string>
+    <string name="shortcut_camera_long">تصویر یا ویڈیو لیں</string>
+    <string name="shortcut_favorites_short">پسندیدہ</string>
+    <string name="shortcut_favorites_long">پسندیدہ تصاویر کھولیں</string>
+    <string name="shortcut_search_short">تلاش</string>
+    <string name="shortcut_search_long">لائبریری میں تلاش کریں</string>
+
+    <!-- Navigation -->
+    <string name="nav_photos">تصاویر</string>
+    <string name="nav_albums">البمز</string>
+    <string name="nav_search">تلاش</string>
+    <string name="nav_files">فائلیں</string>
+    <string name="cd_open_camera">کیمرہ کھولیں</string>
+    <string name="cd_settings">ترتیبات</string>
+    <string name="cd_back">واپس</string>
+    <string name="cd_close">بند کریں</string>
+
+    <!-- Onboarding -->
+    <string name="onboarding_title_1">Far Gallery میں خوش آمدید</string>
+    <string name="onboarding_body_1">آپ کی تصاویر اور ویڈیوز، آپ کے اپنے فون پر۔ بغیر کسی اکاؤنٹ کے، کچھ بھی باہر نہیں جاتا۔</string>
+    <string name="onboarding_title_2">تصاویر، کیمرہ اور فائلیں</string>
+    <string name="onboarding_body_2">تیز ٹائم لائن دیکھیں، مکمل کیمرے سے تصاویر لیں، اور فائلیں و ایس ڈی کارڈ سب ایک جگہ سنبھالیں۔</string>
+    <string name="onboarding_title_3">منتخب کریں کہ ایپ کیا دیکھ سکے</string>
+    <string name="onboarding_body_3">مکمل رسائی پوری لائبریری دکھاتی ہے، یا آپ صرف منتخب تصاویر شیئر کر سکتے ہیں۔ ترتیبات میں کسی بھی وقت بدلا جا سکتا ہے۔</string>
+    <string name="onboarding_continue">جاری رکھیں</string>
+    <string name="onboarding_skip">چھوڑیں</string>
+    <string name="onboarding_skip_now">ابھی چھوڑیں</string>
+    <string name="onboarding_allow_full">مکمل لائبریری کی اجازت دیں</string>
+    <string name="onboarding_choose_selected">صرف منتخب تصاویر چنیں</string>
+
+    <!-- Library -->
+    <string name="library_title">لائبریری</string>
+    <string name="zoom_years">سال</string>
+    <string name="zoom_months">مہینے</string>
+    <string name="zoom_days">دن</string>
+    <string name="zoom_all">سب</string>
+    <string name="selected_count">%1$d منتخب</string>
+    <string name="access_full">مکمل رسائی</string>
+    <string name="access_selected">منتخب تصاویر</string>
+    <string name="access_none">رسائی نہیں</string>
+
+    <!-- Actions -->
+    <string name="action_ok">ٹھیک ہے</string>
+    <string name="action_cancel">منسوخ کریں</string>
+    <string name="action_retry">دوبارہ کوشش کریں</string>
+    <string name="action_save">محفوظ کریں</string>
+    <string name="action_delete">حذف کریں</string>
+    <string name="action_share">شیئر کریں</string>
+    <string name="action_edit">ترمیم کریں</string>
+    <string name="action_rename">نام بدلیں</string>
+    <string name="action_create">بنائیں</string>
+    <string name="action_close">بند کریں</string>
+    <string name="action_paste">پیسٹ %1$d</string>
+
+    <!-- Albums & Collections -->
+    <string name="albums_title">البمز</string>
+    <string name="memories_title">یادیں</string>
+    <string name="collections_title">مجموعے</string>
+    <string name="collection_favorites">پسندیدہ</string>
+    <string name="collection_videos">ویڈیوز</string>
+    <string name="collection_screenshots">اسکرین شاٹس</string>
+    <string name="collection_camera">کیمرہ</string>
+    <string name="collection_duplicates">ڈپلیکیٹس</string>
+    <string name="collection_trash">حالیہ حذف شدہ</string>
+    <string name="collection_excluded">مستثنیٰ فولڈرز</string>
+    <string name="exclude_not_security_note">فائلیں منتقل یا حذف نہیں ہوتیں۔ یہ صرف ٹائم لائن فلٹر ہے، سیکیورٹی فیچر نہیں۔</string>
+
+    <!-- Settings -->
+    <string name="settings_title">ترتیبات</string>
+    <string name="settings_defaults">Far Gallery کو ڈیفالٹ بنائیں</string>
+    <string name="settings_appearance">ظاہری شکل</string>
+    <string name="settings_photos">تصاویر</string>
+    <string name="settings_camera">کیمرہ</string>
+    <string name="settings_privacy_data">رازداری اور ڈیٹا</string>
+    <string name="settings_about">ایپ کے بارے میں</string>
+    <string name="settings_language">زبان</string>
+    <string name="language_system">سسٹم کی زبان</string>
+    <string name="language_en">English</string>
+    <string name="language_ur">اردو (RTL)</string>
+    <string name="about_offline_note">Far Gallery بغیر انٹرنیٹ اور اکاؤنٹ کے کام کرتا ہے۔ اس ورژن میں نہ انٹرنیٹ کی اجازت ہے اور نہ کوئی خفیہ والٹ۔</string>
+</resources>

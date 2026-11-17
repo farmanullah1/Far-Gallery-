@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Far Gallery (maskable)">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0.15" y2="1">
+      <stop offset="0" stop-color="#4F5BFF"/><stop offset="0.5" stop-color="#A855F7"/><stop offset="1" stop-color="#FF8A5B"/>
+    </linearGradient>
+    <radialGradient id="glow"><stop offset="0" stop-color="#fff" stop-opacity="0.85"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#sky)"/>
+  <circle cx="318" cy="196" r="96" fill="url(#glow)"/>
+  <circle cx="318" cy="196" r="40" fill="#fff"/>
+  <path d="M92 380 L190 270 L252 330 L330 254 L424 366 L424 420 L92 420 Z" fill="#fff" fill-opacity="0.55"/>
+  <path d="M92 420 L92 392 L226 208 L262 420 Z" fill="#fff"/>
+  <path d="M226 208 L424 392 L424 420 L262 420 Z" fill="#E4D9FF"/>
+</svg>

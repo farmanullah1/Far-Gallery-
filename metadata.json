@@ -1,6 +1,6 @@
 {
   "name": "Far Gallery",
-  "description": "Privacy-first Android media gallery, editor, vault, and AI studio.",
+  "description": "Local-first Android media gallery, camera, non-destructive photo editor, and SAF file browser.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
