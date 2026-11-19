@@ -10,10 +10,13 @@ import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
@@ -25,7 +28,9 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
@@ -38,7 +43,33 @@ import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import com.example.R
 
-enum class ThemeMode { System, Light, Dark, Amoled }
+enum class ThemeMode {
+    System, Light, Dark, Amoled;
+
+    fun next(): ThemeMode = when (this) {
+        System -> Light
+        Light -> Dark
+        Dark -> Amoled
+        Amoled -> System
+    }
+
+    fun labelRes(): Int = when (this) {
+        System -> R.string.theme_system
+        Light -> R.string.theme_light
+        Dark -> R.string.theme_dark
+        Amoled -> R.string.theme_amoled
+    }
+}
+
+object FarSpacing {
+    val screenPadding: Dp = 16.dp
+    val sectionGap: Dp = 12.dp
+    val itemGap: Dp = 8.dp
+    val tightGap: Dp = 4.dp
+    val minTouch: Dp = 48.dp
+    val bottomNavHeight: Dp = 56.dp
+    val bottomDockClearance: Dp = 96.dp
+}
 
 object FarPalette {
     val Blue = Color(0xFF0A84FF)
@@ -50,6 +81,17 @@ object FarPalette {
     val RecordRed = Color(0xFFFF3B30)
     val curated = listOf(Blue, Green, Orange, Pink, Purple)
 }
+
+@Immutable
+data class FarSemanticColors(
+    val success: Color,
+    val successContainer: Color,
+    val warning: Color,
+    val warningContainer: Color,
+    val info: Color,
+    val cardBorder: Color,
+    val elevatedSurface: Color,
+)
 
 /** Glass tokens consumed by Modifier.glass(). */
 @Immutable
@@ -67,22 +109,43 @@ val LocalReducedMotion = compositionLocalOf { false }
 val LocalReduceTransparency = compositionLocalOf { false }
 val LocalIsDark = compositionLocalOf { false }
 val LocalHapticsEnabled = compositionLocalOf { true }
+val LocalSemanticColors = compositionLocalOf { lightSemanticColors() }
+
+private fun lightSemanticColors() = FarSemanticColors(
+    success = Color(0xFF1B873B),
+    successContainer = Color(0xFFE6F4EA),
+    warning = Color(0xFFA85700),
+    warningContainer = Color(0xFFFEF3E0),
+    info = Color(0xFF0A66C2),
+    cardBorder = Color(0x1C000000),
+    elevatedSurface = Color(0xFFFFFFFF),
+)
+
+private fun darkSemanticColors(amoled: Boolean) = FarSemanticColors(
+    success = Color(0xFF34C759),
+    successContainer = Color(0xFF132E1C),
+    warning = Color(0xFFFFB340),
+    warningContainer = Color(0xFF2D210B),
+    info = Color(0xFF64B5F6),
+    cardBorder = if (amoled) Color(0x36FFFFFF) else Color(0x28FFFFFF),
+    elevatedSurface = if (amoled) Color(0xFF0E0E12) else Color(0xFF1B1B20),
+)
 
 private fun lightGlass() = GlassTokens(
-    tint = Color(0xFFFFFFFF).copy(alpha = 0.62f),
-    tintStrong = Color(0xFFFFFFFF).copy(alpha = 0.78f),
-    borderTop = Color.White.copy(alpha = 0.92f),
-    borderBottom = Color.Black.copy(alpha = 0.10f),
-    fallback = Color(0xFFF6F6FA),
+    tint = Color(0xFFFFFFFF).copy(alpha = 0.80f),
+    tintStrong = Color(0xFFFFFFFF).copy(alpha = 0.92f),
+    borderTop = Color.White.copy(alpha = 0.98f),
+    borderBottom = Color.Black.copy(alpha = 0.14f),
+    fallback = Color(0xFFF6F7FA),
     blur = 24.dp,
 )
 
-private fun darkGlass() = GlassTokens(
-    tint = Color(0xFF1C1C1E).copy(alpha = 0.60f),
-    tintStrong = Color(0xFF1C1C1E).copy(alpha = 0.78f),
-    borderTop = Color.White.copy(alpha = 0.42f),
-    borderBottom = Color.White.copy(alpha = 0.08f),
-    fallback = Color(0xFF232326),
+private fun darkGlass(amoled: Boolean = false) = GlassTokens(
+    tint = (if (amoled) Color(0xFF101015) else Color(0xFF1B1B21)).copy(alpha = if (amoled) 0.84f else 0.78f),
+    tintStrong = (if (amoled) Color(0xFF14141A) else Color(0xFF1E1E26)).copy(alpha = 0.92f),
+    borderTop = Color.White.copy(alpha = if (amoled) 0.50f else 0.42f),
+    borderBottom = Color.White.copy(alpha = if (amoled) 0.16f else 0.14f),
+    fallback = if (amoled) Color(0xFF101014) else Color(0xFF1E1E24),
     blur = 24.dp,
 )
 
@@ -91,32 +154,55 @@ private fun lightScheme(accent: Color) = lightColorScheme(
     onPrimary = Color.White,
     primaryContainer = accent.copy(alpha = 0.14f),
     onPrimaryContainer = accent,
-    background = Color(0xFFFFFFFF),
+    background = Color(0xFFFAFAFC),
     onBackground = Color(0xFF0B0B0F),
     surface = Color(0xFFFFFFFF),
     onSurface = Color(0xFF0B0B0F),
-    surfaceVariant = Color(0xFFF2F2F7),
-    onSurfaceVariant = Color(0xFF636366),
-    outlineVariant = Color(0x1F000000),
-    error = Color(0xFFFF3B30),
+    surfaceVariant = Color(0xFFEEF0F4),
+    onSurfaceVariant = Color(0xFF4A4A52),
+    outlineVariant = Color(0x20000000),
+    error = Color(0xFFD93025),
     onError = Color.White,
 )
 
 private fun darkScheme(accent: Color, amoled: Boolean) = darkColorScheme(
     primary = accent,
     onPrimary = Color.White,
-    primaryContainer = accent.copy(alpha = 0.22f),
+    primaryContainer = accent.copy(alpha = 0.24f),
     onPrimaryContainer = Color.White,
     background = if (amoled) Color.Black else Color(0xFF0B0B0F),
     onBackground = Color.White,
-    surface = if (amoled) Color(0xFF080808) else Color(0xFF1C1C1E),
+    surface = if (amoled) Color(0xFF0B0B0E) else Color(0xFF17171B),
     onSurface = Color.White,
-    surfaceVariant = if (amoled) Color(0xFF141414) else Color(0xFF2C2C2E),
-    onSurfaceVariant = Color(0xFFAEAEB2),
-    outlineVariant = Color(0x33FFFFFF),
+    surfaceVariant = if (amoled) Color(0xFF16161B) else Color(0xFF24242A),
+    onSurfaceVariant = if (amoled) Color(0xFFC2C2CA) else Color(0xFFBDBDC5),
+    outlineVariant = if (amoled) Color(0x3EFFFFFF) else Color(0x32FFFFFF),
     error = Color(0xFFFF453A),
     onError = Color.White,
 )
+
+internal fun enforceThemeContrast(base: ColorScheme, dark: Boolean, amoled: Boolean): ColorScheme = when {
+    !dark -> base.copy(
+        onBackground = if (base.onBackground.luminance() > 0.35f) Color(0xFF0B0B0F) else base.onBackground,
+        onSurface = if (base.onSurface.luminance() > 0.35f) Color(0xFF0B0B0F) else base.onSurface,
+        onSurfaceVariant = if (base.onSurfaceVariant.luminance() > 0.45f) Color(0xFF4A4A52) else base.onSurfaceVariant,
+    )
+    amoled -> base.copy(
+        background = Color.Black,
+        onBackground = Color.White,
+        surface = Color(0xFF0B0B0E),
+        onSurface = Color.White,
+        surfaceVariant = Color(0xFF16161B),
+        onSurfaceVariant = Color(0xFFC2C2CA),
+        outlineVariant = Color(0x3EFFFFFF),
+    )
+    else -> base.copy(
+        onBackground = if (base.onBackground.luminance() < 0.7f) Color.White else base.onBackground,
+        onSurface = if (base.onSurface.luminance() < 0.7f) Color.White else base.onSurface,
+        onSurfaceVariant = if (base.onSurfaceVariant.luminance() < 0.45f) Color(0xFFBDBDC5) else base.onSurfaceVariant,
+        outlineVariant = if (base.outlineVariant.alpha < 0.16f) Color(0x32FFFFFF) else base.outlineVariant,
+    )
+}
 
 private val DisplayFont = FontFamily(Font(R.font.space_grotesk, FontWeight.SemiBold), Font(R.font.space_grotesk, FontWeight.Bold))
 private val BodyFont = FontFamily(Font(R.font.plus_jakarta_sans, FontWeight.Normal), Font(R.font.plus_jakarta_sans, FontWeight.Medium), Font(R.font.plus_jakarta_sans, FontWeight.SemiBold))
@@ -180,13 +266,15 @@ fun FarTheme(
         ThemeMode.Light -> false
         ThemeMode.Dark, ThemeMode.Amoled -> true
     }
+    val amoled = dark && mode == ThemeMode.Amoled
     val ctx = LocalContext.current
-    val scheme: ColorScheme = when {
+    val baseScheme: ColorScheme = when {
         useDynamicColor && Build.VERSION.SDK_INT >= 31 ->
             if (dark) dynamicDarkColorScheme(ctx) else dynamicLightColorScheme(ctx)
-        dark -> darkScheme(accent, mode == ThemeMode.Amoled)
+        dark -> darkScheme(accent, amoled)
         else -> lightScheme(accent)
-    }.let { if (dark && mode == ThemeMode.Amoled) it.copy(background = Color.Black, surface = Color(0xFF080808)) else it }
+    }
+    val scheme = enforceThemeContrast(baseScheme, dark, amoled)
 
     val view = LocalView.current
     if (!view.isInEditMode) {
@@ -201,12 +289,21 @@ fun FarTheme(
     }
 
     CompositionLocalProvider(
-        LocalGlass provides (if (dark) darkGlass() else lightGlass()),
+        LocalGlass provides (if (dark) darkGlass(amoled) else lightGlass()),
         LocalReducedMotion provides reduceMotion,
         LocalReduceTransparency provides reduceTransparency,
         LocalIsDark provides dark,
         LocalHapticsEnabled provides hapticsEnabled,
+        LocalSemanticColors provides (if (dark) darkSemanticColors(amoled) else lightSemanticColors()),
+        LocalContentColor provides scheme.onBackground,
     ) {
-        MaterialTheme(colorScheme = scheme, typography = FarTypography, shapes = FarShapes, content = content)
+        MaterialTheme(colorScheme = scheme, typography = FarTypography, shapes = FarShapes) {
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = scheme.background,
+                contentColor = scheme.onBackground,
+                content = content,
+            )
+        }
     }
 }

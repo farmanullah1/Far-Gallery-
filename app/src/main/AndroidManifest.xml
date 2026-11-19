@@ -190,6 +190,29 @@
             android:exported="false">
             <meta-data android:name="autoStoreLocales" android:value="true" />
         </service>
+
+        <service
+            android:name=".app.ThemeTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_theme_tile"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <receiver
+            android:name=".app.LibraryStatsWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_title">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/library_stats_widget_info" />
+        </receiver>
     </application>
 
 </manifest>

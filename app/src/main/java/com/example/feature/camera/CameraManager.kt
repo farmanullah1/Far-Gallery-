@@ -42,6 +42,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.app.IncomingRoute
+import com.example.core.common.LocalDiagnostics
 import com.example.ui.feedback.ErrorAction
 import com.example.ui.feedback.ErrorInfo
 import com.google.mlkit.vision.barcode.BarcodeScanning
@@ -145,21 +146,23 @@ class FarCameraManager(private val context: Context) {
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
             values,
         ).build()
-        controller.takePicture(opts, mainExecutor, object : ImageCapture.OnImageSavedCallback {
-            override fun onImageSaved(r: ImageCapture.OutputFileResults) {
-                r.savedUri?.let { onDone(Result.success(it)) } ?: onDone(Result.failure(IllegalStateException("no uri")))
-            }
+        runCatching {
+            controller.takePicture(opts, mainExecutor, object : ImageCapture.OnImageSavedCallback {
+                override fun onImageSaved(r: ImageCapture.OutputFileResults) {
+                    r.savedUri?.let { onDone(Result.success(it)) } ?: onDone(Result.failure(IllegalStateException("no uri")))
+                }
 
-            override fun onError(e: ImageCaptureException) {
-                onDone(Result.failure(e))
-            }
-        })
+                override fun onError(e: ImageCaptureException) {
+                    onDone(Result.failure(e))
+                }
+            })
+        }.onFailure { onDone(Result.failure(it)) }
     }
 
     suspend fun takePhotoAwait(): Result<Uri> = suspendCancellableCoroutine { c -> takePhoto { c.resume(it) } }
 
     @SuppressLint("MissingPermission")
-    fun startRecording(maxBytes: Long?, maxSeconds: Int?, onEvent: (VideoRecordEvent) -> Unit) {
+    fun startRecording(maxBytes: Long?, maxSeconds: Int?, onEvent: (VideoRecordEvent) -> Unit): Result<Unit> = runCatching {
         val values = ContentValues().apply {
             put(MediaStore.Video.Media.DISPLAY_NAME, "VID_" + stamp())
             put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
@@ -177,7 +180,7 @@ class FarCameraManager(private val context: Context) {
     }
 
     fun stopRecording() {
-        recording?.stop()
+        runCatching { recording?.stop() }
     }
 
     @androidx.annotation.OptIn(androidx.camera.core.ExperimentalGetImage::class)
@@ -241,9 +244,15 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     var onCaptured: ((Uri) -> Unit)? = null
 
     init {
+        initCamera()
+    }
+
+    private fun initCamera() {
         viewModelScope.launch {
+            _state.update { it.copy(error = null) }
             val c = manager.capabilities()
             if (c == null) {
+                LocalDiagnostics.recordEvent(getApplication(), "FG-CAM-NONE", "camera_init", "capabilities null")
                 _state.update {
                     it.copy(
                         error = ErrorInfo(
@@ -260,21 +269,39 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun retryInit() = viewModelScope.launch {
-        _state.update { it.copy(error = null) }
-        _caps.value = manager.capabilities()
+    fun retryInit() {
+        initCamera()
     }
 
     fun permission(granted: Boolean) = _state.update { it.copy(permissionGranted = granted) }
+    fun micPermission(granted: Boolean) = _state.update { it.copy(micPermissionGranted = granted) }
     fun setGridInitial(on: Boolean) = _state.update { it.copy(gridOn = on) }
     fun toggleGrid() = _state.update { it.copy(gridOn = !it.gridOn) }
 
     fun toggleQr() {
         val next = !_state.value.qrEnabled
-        if (next) {
-            manager.enableQr { code -> _state.update { it.copy(qrResult = code) } }
-        } else {
-            manager.disableQr(_state.value.mode)
+        val res = runCatching {
+            if (next) {
+                manager.enableQr { code -> _state.update { it.copy(qrResult = code) } }
+            } else {
+                manager.disableQr(_state.value.mode)
+            }
+        }
+        res.onFailure {
+            LocalDiagnostics.recordEvent(getApplication(), "FG-CAM-QR", "camera_qr", it.javaClass.simpleName)
+            _state.update { s ->
+                s.copy(
+                    qrEnabled = false,
+                    error = ErrorInfo(
+                        "QR scanner unavailable",
+                        "Couldn't start camera analysis right now.",
+                        true,
+                        "FG-CAM-QR",
+                        listOf(ErrorAction("OK", true) { dismissError() }),
+                    ),
+                )
+            }
+            return
         }
         _state.update { it.copy(qrEnabled = next, qrResult = if (next) it.qrResult else null) }
     }
@@ -283,22 +310,37 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setMode(m: CameraMode) {
         if (_state.value.recording) return
-        manager.setMode(m)
+        runCatching { manager.setMode(m) }
+            .onFailure {
+                LocalDiagnostics.recordEvent(getApplication(), "FG-CAM-MODE", "camera_mode", it.javaClass.simpleName)
+                _state.update { s ->
+                    s.copy(
+                        error = ErrorInfo(
+                            "Couldn't switch camera mode",
+                            "The camera isn't ready for ${m.label.lowercase()} yet.",
+                            true,
+                            "FG-CAM-MODE",
+                            listOf(ErrorAction("OK", true) { dismissError() }),
+                        )
+                    )
+                }
+                return
+            }
         _state.update { it.copy(mode = m, qrEnabled = false) }
     }
 
     fun setZoom(z: Float) {
-        manager.setZoom(z)
+        runCatching { manager.setZoom(z) }
         _state.update { it.copy(zoom = z) }
     }
 
     fun setFlash(f: FlashMode) {
-        manager.setFlash(f)
+        runCatching { manager.setFlash(f) }
         _state.update { it.copy(flash = f) }
     }
 
     fun setExposure(ev: Float) {
-        manager.setExposureEv(ev)
+        runCatching { manager.setExposureEv(ev) }
         _state.update { it.copy(exposureEv = ev) }
     }
 
@@ -306,7 +348,9 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         it.copy(timerSeconds = when (it.timerSeconds) { 0 -> 3; 3 -> 5; 5 -> 10; else -> 0 })
     }
 
-    fun flip() = manager.flip()
+    fun flip() {
+        runCatching { manager.flip() }
+    }
     fun dismissError() = _state.update { it.copy(error = null) }
 
     fun shutter() {
@@ -347,12 +391,16 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                 _state.update { it.copy(lastCaptureUri = uri.toString()) }
                 onCaptured?.invoke(uri)
             },
-            onFailure = { e -> _state.update { it.copy(error = captureErrorInfo(e) { dismissError() }) } },
+            onFailure = { e ->
+                LocalDiagnostics.recordEvent(getApplication(), "FG-CAM-CAP", "camera_photo", e.javaClass.simpleName)
+                _state.update { it.copy(error = captureErrorInfo(e) { dismissError() }) }
+            },
         )
     }
 
     private fun startVideo() {
         if (lowStorage()) {
+            LocalDiagnostics.recordEvent(getApplication(), "FG-SPC", "camera_video", "low storage")
             _state.update {
                 it.copy(
                     error = ErrorInfo(
@@ -366,7 +414,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
             }
             return
         }
-        manager.startRecording(captureRequest?.maxBytes, captureRequest?.maxDurationSec) { e ->
+        val started = manager.startRecording(captureRequest?.maxBytes, captureRequest?.maxDurationSec) { e ->
             when (e) {
                 is VideoRecordEvent.Start -> {
                     _state.update { it.copy(recording = true, recordingSeconds = 0) }
@@ -384,6 +432,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                         e.error != VideoRecordEvent.Finalize.ERROR_DURATION_LIMIT_REACHED &&
                         e.error != VideoRecordEvent.Finalize.ERROR_FILE_SIZE_LIMIT_REACHED
                     ) {
+                        LocalDiagnostics.recordEvent(getApplication(), "FG-REC-${e.error}", "camera_video", "finalize ${e.error}")
                         _state.update {
                             it.copy(
                                 error = ErrorInfo(
@@ -402,6 +451,20 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
                 else -> Unit
+            }
+        }
+        started.onFailure {
+            LocalDiagnostics.recordEvent(getApplication(), "FG-REC-START", "camera_video", it.javaClass.simpleName)
+            _state.update { s ->
+                s.copy(
+                    error = ErrorInfo(
+                        "Couldn't start recording",
+                        "The video encoder or camera isn't ready yet.",
+                        true,
+                        "FG-REC-START",
+                        listOf(ErrorAction("OK", true) { dismissError() }),
+                    )
+                )
             }
         }
     }

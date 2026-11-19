@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -30,24 +31,35 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.BrokenImage
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Compare
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PhotoAlbum
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -58,25 +70,40 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.compose.SubcomposeAsyncImage
 import com.example.R
+import com.example.core.common.LocalDiagnostics
+import com.example.core.common.safeParseMediaUri
+import com.example.core.media.ExifScrubber
+import com.example.core.media.HistogramData
+import com.example.core.media.HistogramEngine
+import com.example.core.media.HistogramOverlay
+import com.example.core.media.QuickExifInfo
 import com.example.ui.feedback.ErrorAction
 import com.example.ui.feedback.ErrorCard
 import com.example.ui.feedback.ErrorInfo
 import com.example.ui.glass.GlassKind
 import com.example.ui.glass.glass
 import com.example.ui.glass.glassSource
+import com.example.ui.theme.FarSpacing
+import com.example.ui.theme.LocalHapticsEnabled
+import com.example.ui.theme.MonoFont
 import dev.chrisbanes.haze.HazeState
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
@@ -104,6 +131,8 @@ fun ViewerScreen(
     detailsContent: @Composable (ViewerItem) -> Unit,
     videoContent: @Composable (ViewerItem) -> Unit,
     onAddToAlbum: ((ViewerItem) -> Unit)? = null,
+    onCompare: ((ViewerItem) -> Unit)? = null,
+    onOpenWith: ((ViewerItem) -> Unit)? = null,
     imageModifier: @Composable (ViewerItem) -> Modifier = { Modifier },
     modifier: Modifier = Modifier,
 ) {
@@ -112,8 +141,8 @@ fun ViewerScreen(
         Box(modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
             ErrorCard(
                 ErrorInfo(
-                    title = "Item unavailable",
-                    whatHappened = "This media item could not be opened.",
+                    title = stringResource(R.string.viewer_item_unavailable),
+                    whatHappened = stringResource(R.string.viewer_item_unavailable_body),
                     actions = listOf(ErrorAction(stringResource(R.string.action_close), true, onClose)),
                 )
             )
@@ -123,13 +152,56 @@ fun ViewerScreen(
 
     val pager = rememberPagerState(initialPage = startIndex.coerceIn(0, (items.size - 1).coerceAtLeast(0))) { items.size }
     val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
+    val haptic = LocalHapticFeedback.current
+    val hapticsOn = LocalHapticsEnabled.current
     var chromeVisible by remember { mutableStateOf(true) }
     var zoomed by remember { mutableStateOf(false) }
     var dismissProgress by remember { mutableFloatStateOf(0f) }
     var showDetails by remember { mutableStateOf(false) }
+    var slideshowPlaying by remember { mutableStateOf(false) }
+    var slideshowIntervalMs by remember { mutableLongStateOf(4000L) }
+    var showExifPill by remember { mutableStateOf(false) }
+    var quickExif by remember { mutableStateOf<QuickExifInfo?>(null) }
+    var showHistogram by remember { mutableStateOf(false) }
+    var histogramData by remember { mutableStateOf<HistogramData?>(null) }
+    var histogramLoading by remember { mutableStateOf(false) }
+
+    val currentItem = items.getOrNull(pager.currentPage)
+    LaunchedEffect(currentItem?.uri, showExifPill) {
+        val parsed = currentItem?.uri?.let(::safeParseMediaUri)
+        if (showExifPill && currentItem != null && !currentItem.isVideo && parsed != null) {
+            quickExif = ExifScrubber.readQuickExif(ctx.contentResolver, parsed)
+        } else {
+            quickExif = null
+        }
+    }
+    LaunchedEffect(currentItem?.uri, showHistogram) {
+        val parsed = currentItem?.uri?.let(::safeParseMediaUri)
+        if (showHistogram && currentItem != null && !currentItem.isVideo && parsed != null) {
+            histogramLoading = true
+            histogramData = HistogramEngine.fromUri(ctx, parsed)
+            histogramLoading = false
+        } else {
+            histogramData = null
+            histogramLoading = false
+        }
+    }
+
+    LaunchedEffect(slideshowPlaying, pager.currentPage, slideshowIntervalMs, items.size) {
+        if (slideshowPlaying && items.size > 1 && !zoomed) {
+            delay(slideshowIntervalMs)
+            val next = (pager.currentPage + 1) % items.size
+            pager.animateScrollToPage(next)
+        }
+    }
 
     BackHandler {
-        if (showDetails) showDetails = false else onClose()
+        when {
+            showDetails -> showDetails = false
+            slideshowPlaying -> slideshowPlaying = false
+            else -> onClose()
+        }
     }
 
     Box(modifier.fillMaxSize().background(Color.Black.copy(alpha = 1f - dismissProgress * 0.9f))) {
@@ -148,16 +220,23 @@ fun ViewerScreen(
             } else {
                 ZoomableImage(
                     uri = item.uri,
-                    onZoomed = { zoomed = it },
+                    onZoomed = {
+                        zoomed = it
+                        if (it) slideshowPlaying = false
+                    },
                     onDismissProgress = { dismissProgress = it },
                     onDismiss = onClose,
-                    onTap = { chromeVisible = !chromeVisible },
+                    onTap = {
+                        if (slideshowPlaying) slideshowPlaying = false
+                        chromeVisible = !chromeVisible
+                    },
+                    onOpenWith = onOpenWith?.let { fn -> { fn(item) } },
                     imageModifier = imageModifier(item),
                 )
             }
         }
 
-        val current = items.getOrNull(pager.currentPage)
+        val current = currentItem
         if (current != null) {
             AnimatedVisibility(
                 visible = chromeVisible && dismissProgress == 0f,
@@ -165,30 +244,132 @@ fun ViewerScreen(
                 enter = fadeIn(),
                 exit = fadeOut(),
             ) {
-                Row(
+                Column(
                     Modifier
                         .fillMaxWidth()
                         .statusBarsPadding()
-                        .padding(12.dp)
-                        .glass(glass, RoundedCornerShape(28.dp), GlassKind.Overlay)
-                        .padding(horizontal = 4.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                        .padding(horizontal = FarSpacing.screenPadding, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    IconButton(onClick = onClose, modifier = Modifier.testTag("viewer_back_button")) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.cd_back), tint = Color.White)
-                    }
-                    Column(Modifier.weight(1f)) {
-                        Text(current.title, color = Color.White, style = MaterialTheme.typography.titleMedium, maxLines = 1)
-                        current.subtitle?.let {
-                            Text(it, color = Color.White.copy(0.75f), style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .glass(glass, RoundedCornerShape(28.dp), GlassKind.Overlay)
+                            .border(0.75.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(28.dp))
+                            .padding(horizontal = 4.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        IconButton(
+                            onClick = onClose,
+                            modifier = Modifier.size(48.dp).testTag("viewer_back_button"),
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.cd_back), tint = Color.White)
+                        }
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                current.title,
+                                color = Color.White,
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            current.subtitle?.let {
+                                Text(
+                                    it,
+                                    color = Color.White.copy(0.75f),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                        if (!current.isVideo) {
+                            IconButton(
+                                onClick = { showHistogram = !showHistogram },
+                                modifier = Modifier.size(48.dp).testTag("viewer_histogram_button"),
+                            ) {
+                                Icon(
+                                    Icons.Filled.BarChart,
+                                    stringResource(R.string.viewer_histogram),
+                                    tint = if (showHistogram) MaterialTheme.colorScheme.primary else Color.White,
+                                )
+                            }
+                            IconButton(
+                                onClick = { showExifPill = !showExifPill },
+                                modifier = Modifier.size(48.dp).testTag("viewer_exif_pill_button"),
+                            ) {
+                                Icon(
+                                    Icons.Filled.CameraAlt,
+                                    "Toggle EXIF overlay",
+                                    tint = if (showExifPill) MaterialTheme.colorScheme.primary else Color.White,
+                                )
+                            }
+                        }
+                        if (items.size > 1) {
+                            IconButton(
+                                onClick = {
+                                    slideshowPlaying = !slideshowPlaying
+                                    if (slideshowPlaying) chromeVisible = false
+                                },
+                                modifier = Modifier.size(48.dp).testTag("viewer_slideshow_button"),
+                            ) {
+                                Icon(
+                                    if (slideshowPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                                    if (slideshowPlaying) "Pause slideshow" else "Start slideshow",
+                                    tint = if (slideshowPlaying) MaterialTheme.colorScheme.primary else Color.White,
+                                )
+                            }
+                        }
+                        IconButton(
+                            onClick = {
+                                if (hapticsOn) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onFavorite(current)
+                            },
+                            modifier = Modifier.size(48.dp).testTag("viewer_favorite_button"),
+                        ) {
+                            Icon(
+                                if (current.isFavorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                                if (current.isFavorite) "Remove from favorites" else "Add to favorites",
+                                tint = if (current.isFavorite) Color(0xFFFF375F) else Color.White,
+                            )
                         }
                     }
-                    IconButton(onClick = { onFavorite(current) }, modifier = Modifier.testTag("viewer_favorite_button")) {
-                        Icon(
-                            if (current.isFavorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
-                            if (current.isFavorite) "Remove from favorites" else "Add to favorites",
-                            tint = if (current.isFavorite) Color(0xFFFF375F) else Color.White,
-                        )
+
+                    if (showExifPill && !current.isVideo) {
+                        val exifText = quickExif?.summaryLine() ?: stringResource(R.string.viewer_no_exif)
+                        Row(
+                            Modifier
+                                .glass(glass, RoundedCornerShape(18.dp), GlassKind.Chip)
+                                .border(0.75.dp, Color.White.copy(alpha = 0.20f), RoundedCornerShape(18.dp))
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                                .testTag("viewer_exif_pill"),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(exifText, color = Color.White, style = MaterialTheme.typography.labelMedium.copy(fontFamily = MonoFont))
+                        }
+                    }
+
+                    if (slideshowPlaying) {
+                        Row(
+                            Modifier
+                                .glass(glass, RoundedCornerShape(22.dp), GlassKind.Chip)
+                                .border(0.75.dp, Color.White.copy(alpha = 0.20f), RoundedCornerShape(22.dp))
+                                .padding(horizontal = 8.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            listOf(3000L to "3s", 5000L to "5s", 8000L to "8s").forEach { (ms, label) ->
+                                TextButton(
+                                    onClick = { slideshowIntervalMs = ms },
+                                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                                ) {
+                                    Text(
+                                        label,
+                                        color = if (slideshowIntervalMs == ms) MaterialTheme.colorScheme.primary else Color.White,
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -206,6 +387,16 @@ fun ViewerScreen(
                         .padding(bottom = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
+                    if (showHistogram && !current.isVideo) {
+                        HistogramOverlay(
+                            data = histogramData,
+                            loading = histogramLoading,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp)
+                                .testTag("viewer_histogram_overlay"),
+                        )
+                    }
                     if (items.size > 1 && !current.isVideo) {
                         LazyRow(
                             contentPadding = PaddingValues(horizontal = 16.dp),
@@ -237,28 +428,34 @@ fun ViewerScreen(
                     Row(
                         Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp)
+                            .padding(horizontal = FarSpacing.screenPadding)
                             .glass(glass, RoundedCornerShape(32.dp), GlassKind.Overlay)
-                            .padding(6.dp),
+                            .border(0.75.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(32.dp))
+                            .padding(horizontal = 6.dp, vertical = 4.dp),
                         horizontalArrangement = Arrangement.SpaceEvenly,
                     ) {
-                        IconButton(onClick = { onShare(current) }, modifier = Modifier.testTag("viewer_share_button")) {
+                        IconButton(onClick = { onShare(current) }, modifier = Modifier.size(48.dp).testTag("viewer_share_button")) {
                             Icon(Icons.Filled.Share, stringResource(R.string.action_share), tint = Color.White)
                         }
                         if (!current.isVideo) {
-                            IconButton(onClick = { onEdit(current) }, modifier = Modifier.testTag("viewer_edit_button")) {
+                            IconButton(onClick = { onEdit(current) }, modifier = Modifier.size(48.dp).testTag("viewer_edit_button")) {
                                 Icon(Icons.Filled.Edit, stringResource(R.string.action_edit), tint = Color.White)
                             }
                         }
-                        if (onAddToAlbum != null) {
-                            IconButton(onClick = { onAddToAlbum(current) }, modifier = Modifier.testTag("viewer_album_button")) {
-                                Icon(Icons.Filled.PhotoAlbum, "Add to album", tint = Color.White)
+                        if (onCompare != null && !current.isVideo && current.id > 0L) {
+                            IconButton(onClick = { onCompare(current) }, modifier = Modifier.size(48.dp).testTag("viewer_compare_button")) {
+                                Icon(Icons.Filled.Compare, stringResource(R.string.viewer_compare), tint = Color.White)
                             }
                         }
-                        IconButton(onClick = { showDetails = true }, modifier = Modifier.testTag("viewer_details_button")) {
-                            Icon(Icons.Filled.Info, "Details", tint = Color.White)
+                        if (onAddToAlbum != null) {
+                            IconButton(onClick = { onAddToAlbum(current) }, modifier = Modifier.size(48.dp).testTag("viewer_album_button")) {
+                                Icon(Icons.Filled.PhotoAlbum, stringResource(R.string.viewer_add_to_album), tint = Color.White)
+                            }
                         }
-                        IconButton(onClick = { onDelete(current) }, modifier = Modifier.testTag("viewer_delete_button")) {
+                        IconButton(onClick = { showDetails = true }, modifier = Modifier.size(48.dp).testTag("viewer_details_button")) {
+                            Icon(Icons.Filled.Info, stringResource(R.string.viewer_details), tint = Color.White)
+                        }
+                        IconButton(onClick = { onDelete(current) }, modifier = Modifier.size(48.dp).testTag("viewer_delete_button")) {
                             Icon(Icons.Filled.Delete, stringResource(R.string.action_delete), tint = Color.White)
                         }
                     }
@@ -268,9 +465,12 @@ fun ViewerScreen(
             if (showDetails) {
                 ModalBottomSheet(
                     onDismissRequest = { showDetails = false },
-                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
+                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+                    contentColor = MaterialTheme.colorScheme.onSurface,
                 ) {
-                    detailsContent(current)
+                    CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
+                        detailsContent(current)
+                    }
                 }
             }
         }
@@ -288,13 +488,16 @@ fun ZoomableImage(
     onDismissProgress: (Float) -> Unit,
     onDismiss: () -> Unit,
     onTap: () -> Unit,
+    onOpenWith: (() -> Unit)? = null,
     imageModifier: Modifier = Modifier,
 ) {
-    var scale by remember { mutableFloatStateOf(1f) }
-    var offset by remember { mutableStateOf(Offset.Zero) }
-    var dragY by remember { mutableFloatStateOf(0f) }
+    val ctx = LocalContext.current
+    var retryNonce by remember(uri) { mutableIntStateOf(0) }
+    var scale by remember(uri) { mutableFloatStateOf(1f) }
+    var offset by remember(uri) { mutableStateOf(Offset.Zero) }
+    var dragY by remember(uri) { mutableFloatStateOf(0f) }
     var size by remember { mutableStateOf(IntSize.Zero) }
-    var failed by remember { mutableStateOf(false) }
+    var failed by remember(uri, retryNonce) { mutableStateOf(false) }
     val slop = LocalViewConfiguration.current.touchSlop
 
     fun clampOffset(o: Offset, s: Float): Offset {
@@ -307,7 +510,7 @@ fun ZoomableImage(
         Modifier
             .fillMaxSize()
             .onSizeChanged { size = it }
-            .pointerInput(Unit) {
+            .pointerInput(uri) {
                 detectTapGestures(
                     onTap = { onTap() },
                     onDoubleTap = {
@@ -321,7 +524,7 @@ fun ZoomableImage(
                     },
                 )
             }
-            .pointerInput(Unit) {
+            .pointerInput(uri) {
                 awaitEachGesture {
                     awaitFirstDown(requireUnconsumed = false)
                     var totalDy = 0f
@@ -358,21 +561,32 @@ fun ZoomableImage(
         contentAlignment = Alignment.Center,
     ) {
         if (failed) {
+            val actions = buildList {
+                add(ErrorAction(stringResource(R.string.action_retry), true) {
+                    failed = false
+                    retryNonce++
+                })
+                onOpenWith?.let { add(ErrorAction(stringResource(R.string.viewer_open_with), false, it)) }
+                add(ErrorAction(stringResource(R.string.action_close), false, onDismiss))
+            }
             ErrorCard(
                 ErrorInfo(
-                    title = "Preview unavailable",
-                    whatHappened = "This image is damaged or uses a format this device can't display.",
+                    title = stringResource(R.string.viewer_preview_unavailable),
+                    whatHappened = stringResource(R.string.viewer_preview_unavailable_body),
                     code = "FG-COR",
-                    actions = listOf(ErrorAction(stringResource(R.string.action_close), false, onDismiss)),
+                    actions = actions,
                 ),
             )
         } else {
             val dragScale = 1f - (dragY / (size.height.coerceAtLeast(1) * 0.4f)).coerceIn(0f, 1f) * 0.15f
             SubcomposeAsyncImage(
-                model = uri,
+                model = "$uri#$retryNonce",
                 contentDescription = null,
                 contentScale = ContentScale.Fit,
-                onError = { failed = true },
+                onError = {
+                    failed = true
+                    LocalDiagnostics.recordEvent(ctx, "FG-COR", "viewer_decode", it.result.throwable.javaClass.simpleName)
+                },
                 modifier = imageModifier
                     .fillMaxSize()
                     .graphicsLayer {

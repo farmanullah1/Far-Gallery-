@@ -2,32 +2,35 @@ package com.example.feature.duplicates
 
 import android.content.ContentResolver
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -43,7 +46,10 @@ import com.example.core.common.FarResult
 import com.example.core.common.farCatching
 import com.example.core.media.MediaRow
 import com.example.core.storage.Checksums
+import com.example.ui.components.FarTopBar
 import com.example.ui.feedback.EmptyState
+import com.example.ui.theme.FarSpacing
+import com.example.ui.theme.LocalSemanticColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -100,6 +106,8 @@ fun DuplicatesScreen(
     onTrash: (List<Uri>) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    BackHandler(onBack = onBack)
+    val semantic = LocalSemanticColors.current
     val marked = remember(groups) {
         mutableStateMapOf<Long, Boolean>().apply {
             groups.forEach { g ->
@@ -111,22 +119,21 @@ fun DuplicatesScreen(
         modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .padding(16.dp),
+            .navigationBarsPadding(),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            IconButton(onClick = onBack, modifier = Modifier.testTag("duplicates_back_button")) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.cd_back))
-            }
-            Text(stringResource(R.string.collection_duplicates), style = MaterialTheme.typography.displayLarge)
-        }
+        FarTopBar(
+            title = stringResource(R.string.collection_duplicates),
+            onBack = onBack,
+            backTestTag = "duplicates_back_button",
+        )
         if (scanning != null) {
-            LinearProgressIndicator(
-                progress = { if (scanning.total == 0) 0f else scanning.hashed.toFloat() / scanning.total },
-                Modifier.fillMaxWidth().padding(vertical = 12.dp),
-            )
-            Text("Checking ${scanning.hashed} of ${scanning.total} files…", style = MaterialTheme.typography.labelMedium)
+            Column(Modifier.padding(horizontal = FarSpacing.screenPadding)) {
+                LinearProgressIndicator(
+                    progress = { if (scanning.total == 0) 0f else scanning.hashed.toFloat() / scanning.total },
+                    Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                )
+                Text("Checking ${scanning.hashed} of ${scanning.total} files…", style = MaterialTheme.typography.labelMedium)
+            }
         }
         if (scanning == null && groups.isEmpty()) {
             Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -137,33 +144,46 @@ fun DuplicatesScreen(
                 )
             }
         } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.weight(1f).padding(top = 8.dp)) {
+            LazyColumn(
+                contentPadding = PaddingValues(horizontal = FarSpacing.screenPadding, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.weight(1f),
+            ) {
                 items(groups, key = { it.hash }) { g ->
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("${g.items.size} identical copies", style = MaterialTheme.typography.titleMedium)
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            items(g.items, key = { it.row.id }) { d ->
-                                val ticked = marked[d.row.id] == true
-                                val othersKept = g.items.count { it.row.id != d.row.id && marked[it.row.id] != true }
-                                Column(Modifier.size(width = 124.dp, height = 196.dp)) {
-                                    Box(Modifier.size(120.dp).clip(RoundedCornerShape(10.dp))) {
-                                        AsyncImage(d.row.uri, d.row.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                                    }
-                                    Text(d.row.name, maxLines = 1, style = MaterialTheme.typography.labelMedium)
-                                    if (d.protected) {
-                                        Text(
-                                            if (d.isFavorite) "Favorite — kept" else "In album — kept",
-                                            style = MaterialTheme.typography.labelMedium,
-                                            color = MaterialTheme.colorScheme.primary,
-                                        )
-                                    } else {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Checkbox(
-                                                checked = ticked,
-                                                onCheckedChange = { want -> if (!want || othersKept > 0) marked[d.row.id] = want },
-                                                enabled = ticked || othersKept > 0,
+                    CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .background(semantic.elevatedSurface, RoundedCornerShape(20.dp))
+                                .border(0.75.dp, semantic.cardBorder, RoundedCornerShape(20.dp))
+                                .padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text("${g.items.size} identical copies", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                items(g.items, key = { it.row.id }) { d ->
+                                    val ticked = marked[d.row.id] == true
+                                    val othersKept = g.items.count { it.row.id != d.row.id && marked[it.row.id] != true }
+                                    Column(Modifier.size(width = 124.dp, height = 196.dp)) {
+                                        Box(Modifier.size(120.dp).clip(RoundedCornerShape(10.dp))) {
+                                            AsyncImage(d.row.uri, d.row.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                                        }
+                                        Text(d.row.name, maxLines = 1, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
+                                        if (d.protected) {
+                                            Text(
+                                                if (d.isFavorite) "Favorite — kept" else "In album — kept",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = MaterialTheme.colorScheme.primary,
                                             )
-                                            Text("Delete", style = MaterialTheme.typography.labelMedium)
+                                        } else {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Checkbox(
+                                                    checked = ticked,
+                                                    onCheckedChange = { want -> if (!want || othersKept > 0) marked[d.row.id] = want },
+                                                    enabled = ticked || othersKept > 0,
+                                                )
+                                                Text("Delete", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
+                                            }
                                         }
                                     }
                                 }
@@ -176,7 +196,11 @@ fun DuplicatesScreen(
             Button(
                 onClick = { onTrash(chosen.map { it.row.uri }) },
                 enabled = chosen.isNotEmpty(),
-                modifier = Modifier.fillMaxWidth().testTag("duplicates_trash_button"),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = FarSpacing.screenPadding, vertical = 12.dp)
+                    .defaultMinSize(minHeight = 48.dp)
+                    .testTag("duplicates_trash_button"),
             ) {
                 Text("Move ${chosen.size} to Recently Deleted")
             }

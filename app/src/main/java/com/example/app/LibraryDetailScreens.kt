@@ -8,6 +8,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,13 +17,18 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -31,20 +37,26 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.PhotoAlbum
 import androidx.compose.material.icons.filled.RestoreFromTrash
+import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.InputChip
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -53,19 +65,24 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
+import coil.compose.AsyncImage
 import com.example.R
+import com.example.core.common.LocalDiagnostics
+import com.example.core.common.safeParseMediaUri
 import com.example.core.database.AlbumEntity
 import com.example.core.database.TagEntity
+import com.example.core.media.ExifScrubber
 import com.example.core.media.MediaRow
+import com.example.core.media.QuickExifInfo
 import com.example.feature.files.FileEntry
 import com.example.feature.files.FilePreview
 import com.example.feature.files.FilesEvent
@@ -73,9 +90,12 @@ import com.example.feature.files.FilesScreen
 import com.example.feature.files.FilesViewModel
 import com.example.feature.files.humanSize
 import com.example.feature.viewer.ViewerItem
+import com.example.ui.components.FarTopBar
 import com.example.ui.feedback.EmptyState
 import com.example.ui.feedback.GlassToast
 import com.example.ui.feedback.OperationProgressSheet
+import com.example.ui.theme.FarSpacing
+import com.example.ui.theme.LocalSemanticColors
 import dev.chrisbanes.haze.HazeState
 import java.text.DateFormat
 import java.util.Date
@@ -91,19 +111,28 @@ fun MediaDetailsSheetContent(
     onAddTag: (String) -> Unit,
     onRemoveTag: (Long) -> Unit,
     onScanOcr: () -> Unit,
+    onShareClean: (() -> Unit)? = null,
+    onSaveCleanCopy: (() -> Unit)? = null,
 ) {
     val ctx = LocalContext.current
-    val clipboard = LocalClipboardManager.current
+    val semantic = LocalSemanticColors.current
     var newTag by remember { mutableStateOf("") }
+    var exifInfo by remember(item.uri) { mutableStateOf<QuickExifInfo?>(null) }
 
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .navigationBarsPadding()
-            .padding(horizontal = 24.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text(item.title, style = MaterialTheme.typography.titleMedium)
+    LaunchedEffect(item.uri, item.isVideo) {
+        val parsed = safeParseMediaUri(item.uri)
+        exifInfo = if (!item.isVideo && parsed != null) ExifScrubber.readQuickExif(ctx.contentResolver, parsed) else null
+    }
+
+    CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 24.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(item.title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
         if (row != null) {
             val fmt = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
             Text(
@@ -128,9 +157,38 @@ fun MediaDetailsSheetContent(
                 )
             }
         }
+        exifInfo?.summaryLine()?.let { line ->
+            Text(
+                line,
+                style = MaterialTheme.typography.labelMedium,
+                color = if (exifInfo?.hasGps == true) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (!item.isVideo && (onShareClean != null || onSaveCleanCopy != null)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                onShareClean?.let {
+                    OutlinedButton(
+                        onClick = it,
+                        modifier = Modifier.weight(1f).defaultMinSize(minHeight = 48.dp).testTag("details_share_clean"),
+                    ) {
+                        Icon(Icons.Filled.Share, null, Modifier.size(16.dp))
+                        Text(" Share clean", maxLines = 1)
+                    }
+                }
+                onSaveCleanCopy?.let {
+                    OutlinedButton(
+                        onClick = it,
+                        modifier = Modifier.weight(1f).defaultMinSize(minHeight = 48.dp).testTag("details_save_clean"),
+                    ) {
+                        Icon(Icons.Filled.Security, null, Modifier.size(16.dp))
+                        Text(" Save clean copy", maxLines = 1)
+                    }
+                }
+            }
+        }
 
         // Local Room tags
-        Text("Local tags", style = MaterialTheme.typography.titleMedium)
+        Text("Local tags", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
         if (tags.isNotEmpty()) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 tags.forEach { tag ->
@@ -158,31 +216,39 @@ fun MediaDetailsSheetContent(
                         newTag = ""
                     }
                 },
+                modifier = Modifier.size(48.dp),
             ) {
-                Icon(Icons.Filled.Add, "Add tag")
+                Icon(Icons.Filled.Add, "Add tag", tint = MaterialTheme.colorScheme.onSurface)
             }
         }
 
         // On-device OCR text
         if (!item.isVideo) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text("Text in photo (on-device OCR)", style = MaterialTheme.typography.titleMedium)
+                Text("Text in photo (on-device OCR)", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
                 if (ocrLoading) {
                     CircularProgressIndicator(Modifier.size(18.dp))
                 } else {
-                    TextButton(onClick = onScanOcr) { Text(if (ocrText == null) "Scan text" else "Rescan") }
+                    TextButton(
+                        onClick = onScanOcr,
+                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                    ) { Text(if (ocrText == null) "Scan text" else "Rescan") }
                 }
             }
             if (!ocrText.isNullOrBlank()) {
                 Column(
                     Modifier
                         .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(14.dp))
+                        .background(semantic.elevatedSurface, RoundedCornerShape(14.dp))
+                        .border(0.75.dp, semantic.cardBorder, RoundedCornerShape(14.dp))
                         .padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Text(ocrText, style = MaterialTheme.typography.bodyMedium)
-                    TextButton(onClick = { clipboard.setText(AnnotatedString(ocrText)) }) {
+                    Text(ocrText, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
+                    TextButton(
+                        onClick = { copyPlainTextToClipboard(ctx, "OCR Text", ocrText) },
+                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                    ) {
                         Icon(Icons.Filled.ContentCopy, null, Modifier.size(16.dp))
                         Text(" Copy text", modifier = Modifier.padding(start = 4.dp))
                     }
@@ -191,6 +257,7 @@ fun MediaDetailsSheetContent(
                 Text("No readable text detected.", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+    }
     }
 }
 
@@ -230,7 +297,7 @@ fun AlbumPickerDialog(
                                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                             ) {
                                 Icon(Icons.Filled.PhotoAlbum, null, tint = MaterialTheme.colorScheme.primary)
-                                Text(a.name, style = MaterialTheme.typography.bodyLarge)
+                                Text(a.name, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
                             }
                         }
                     }
@@ -257,39 +324,85 @@ fun AlbumPickerDialog(
 }
 
 @Composable
+fun AlbumCoverPickerDialog(
+    albumName: String,
+    candidates: List<MediaRow>,
+    onPickCover: (Long?) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Cover for “$albumName”") },
+        text = {
+            if (candidates.isEmpty()) {
+                Text("Add photos to this album first to pick a custom cover.")
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(3),
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    gridItems(candidates, key = { it.id }) { row ->
+                        AsyncImage(
+                            model = row.uri,
+                            contentDescription = row.name,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .aspectRatio(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    onPickCover(row.id)
+                                    onDismiss()
+                                }
+                                .testTag("cover_candidate_${row.id}"),
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                onPickCover(null)
+                onDismiss()
+            }) { Text("Reset auto") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
+        },
+    )
+}
+
+@Composable
 fun SubCollectionHeader(
     title: String,
     subtitle: String? = null,
     onBack: () -> Unit,
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
+    secondaryActionLabel: String? = null,
+    onSecondaryAction: (() -> Unit)? = null,
 ) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .statusBarsPadding()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-            IconButton(onClick = onBack, modifier = Modifier.testTag("collection_back_button")) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.cd_back))
-            }
-            Column {
-                Text(title, style = MaterialTheme.typography.headlineMedium, maxLines = 1)
-                subtitle?.let {
-                    Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    FarTopBar(
+        title = title,
+        subtitle = subtitle,
+        onBack = onBack,
+        backTestTag = "collection_back_button",
+        actions = {
+            if (secondaryActionLabel != null && onSecondaryAction != null) {
+                TextButton(onClick = onSecondaryAction, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) {
+                    Icon(Icons.Filled.Image, null, Modifier.size(18.dp))
+                    Text(" $secondaryActionLabel")
                 }
             }
-        }
-        if (actionLabel != null && onAction != null) {
-            TextButton(onClick = onAction) {
-                Icon(Icons.Filled.RestoreFromTrash, null, Modifier.size(18.dp))
-                Text(" $actionLabel")
+            if (actionLabel != null && onAction != null) {
+                TextButton(onClick = onAction, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) {
+                    Icon(Icons.Filled.RestoreFromTrash, null, Modifier.size(18.dp))
+                    Text(" $actionLabel")
+                }
             }
-        }
-    }
+        },
+    )
 }
 
 @Composable
@@ -300,11 +413,11 @@ fun ExcludedFoldersScreen(
     onBack: () -> Unit,
 ) {
     BackHandler(onBack = onBack)
+    val semantic = LocalSemanticColors.current
     Column(
         Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding()
             .navigationBarsPadding(),
     ) {
         SubCollectionHeader(
@@ -317,8 +430,9 @@ fun ExcludedFoldersScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp)
-                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(16.dp))
+                .padding(horizontal = FarSpacing.screenPadding, vertical = 8.dp)
+                .background(semantic.elevatedSurface, RoundedCornerShape(16.dp))
+                .border(0.75.dp, semantic.cardBorder, RoundedCornerShape(16.dp))
                 .padding(14.dp),
         )
         val combined = (allFolders + excluded).distinct().sorted()
@@ -329,18 +443,22 @@ fun ExcludedFoldersScreen(
                 "Allow photo access first to choose folders to exclude from the main timeline.",
             )
         } else {
-            LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyColumn(
+                contentPadding = PaddingValues(horizontal = FarSpacing.screenPadding, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 items(combined, key = { it }) { path ->
                     val isExcluded = path in excluded
                     Row(
                         Modifier
                             .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(16.dp))
+                            .background(semantic.elevatedSurface, RoundedCornerShape(16.dp))
+                            .border(0.75.dp, semantic.cardBorder, RoundedCornerShape(16.dp))
                             .padding(horizontal = 14.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Icon(Icons.Filled.Folder, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(end = 12.dp))
-                        Text(path, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                        Text(path, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
                         Switch(checked = isExcluded, onCheckedChange = { onToggleExclude(path, it) })
                     }
                 }
@@ -357,6 +475,7 @@ fun FilesTab(glass: HazeState) {
     val ctx = LocalContext.current
     var renaming by remember { mutableStateOf<FileEntry?>(null) }
     var deleting by remember { mutableStateOf<List<FileEntry>?>(null) }
+    var zipping by remember { mutableStateOf<List<FileEntry>?>(null) }
     var props by remember { mutableStateOf<Pair<FileEntry, String>?>(null) }
     var previewing by remember { mutableStateOf<Triple<Uri, String, String>?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -390,6 +509,7 @@ fun FilesTab(glass: HazeState) {
                 }.onFailure { message = "Couldn't open share chooser." }
                 is FilesEvent.AskRename -> renaming = e.entry
                 is FilesEvent.AskDelete -> deleting = e.entries
+                is FilesEvent.AskZip -> zipping = e.entries
                 is FilesEvent.Message -> message = e.text
                 is FilesEvent.Properties -> props = e.entry to e.path
             }
@@ -398,13 +518,18 @@ fun FilesTab(glass: HazeState) {
 
     Box(Modifier.fillMaxSize()) {
         FilesScreen(ui, fvm, glass)
-        op?.let {
-            Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 96.dp)) {
+        Column(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(bottom = 84.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            op?.let {
                 OperationProgressSheet(glass, it, onCancel = fvm::cancelOperation)
             }
-        }
-        message?.let { m ->
-            Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 96.dp)) {
+            message?.let { m ->
                 GlassToast(glass, m, stringResource(R.string.action_ok), onAction = { message = null })
             }
         }
@@ -417,12 +542,54 @@ fun FilesTab(glass: HazeState) {
             title = { Text(stringResource(R.string.action_rename)) },
             text = { OutlinedTextField(name, { name = it }, singleLine = true) },
             confirmButton = {
-                TextButton({ fvm.confirmRename(e, name.trim()); renaming = null }) {
+                TextButton(
+                    onClick = { fvm.confirmRename(e, name.trim()); renaming = null },
+                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                ) {
                     Text(stringResource(R.string.action_rename))
                 }
             },
             dismissButton = {
-                TextButton({ renaming = null }) { Text(stringResource(R.string.action_cancel)) }
+                TextButton(
+                    onClick = { renaming = null },
+                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                ) { Text(stringResource(R.string.action_cancel)) }
+            },
+        )
+    }
+
+    zipping?.let { list ->
+        val defaultName = remember(list) {
+            if (list.size == 1) "${list.first().name.substringBeforeLast('.')}.zip" else "Archive.zip"
+        }
+        var zipName by remember(list) { mutableStateOf(defaultName) }
+        AlertDialog(
+            onDismissRequest = { zipping = null },
+            title = { Text("Create ZIP (${list.size} item(s))") },
+            text = {
+                OutlinedTextField(
+                    value = zipName,
+                    onValueChange = { zipName = it },
+                    label = { Text("Archive name") },
+                    singleLine = true,
+                    modifier = Modifier.testTag("zip_name_input"),
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        fvm.confirmCreateZip(list, zipName)
+                        zipping = null
+                    },
+                    enabled = zipName.isNotBlank(),
+                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                ) { Text(stringResource(R.string.action_create)) }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { zipping = null },
+                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                ) { Text(stringResource(R.string.action_cancel)) }
             },
         )
     }
@@ -433,10 +600,16 @@ fun FilesTab(glass: HazeState) {
             title = { Text("Delete ${list.size} item(s)?") },
             text = { Text("This permanently deletes them from this location. This can't be undone.") },
             confirmButton = {
-                TextButton({ fvm.confirmDelete(list); deleting = null }) { Text(stringResource(R.string.action_delete)) }
+                TextButton(
+                    onClick = { fvm.confirmDelete(list); deleting = null },
+                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                ) { Text(stringResource(R.string.action_delete)) }
             },
             dismissButton = {
-                TextButton({ deleting = null }) { Text(stringResource(R.string.action_cancel)) }
+                TextButton(
+                    onClick = { deleting = null },
+                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                ) { Text(stringResource(R.string.action_cancel)) }
             },
         )
     }
@@ -454,7 +627,12 @@ fun FilesTab(glass: HazeState) {
                     Text("Permissions: rename=${e.canRename}, move=${e.canMove}, delete=${e.canDelete}")
                 }
             },
-            confirmButton = { TextButton({ props = null }) { Text(stringResource(R.string.action_ok)) } },
+            confirmButton = {
+                TextButton(
+                    onClick = { props = null },
+                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                ) { Text(stringResource(R.string.action_ok)) }
+            },
         )
     }
 
@@ -464,27 +642,29 @@ fun FilesTab(glass: HazeState) {
             properties = DialogProperties(usePlatformDefaultWidth = false),
         ) {
             Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        IconButton(onClick = { previewing = null }) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.cd_back))
-                        }
-                        Text(name, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f), maxLines = 1)
-                        TextButton(onClick = {
-                            runCatching {
-                                (ctx as? Activity ?: ctx).startActivity(
-                                    Intent.createChooser(
-                                        Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
-                                        null,
-                                    )
-                                )
-                            }
-                        }) { Text("Open with") }
-                    }
+                Column(Modifier.fillMaxSize().navigationBarsPadding()) {
+                    FarTopBar(
+                        title = name,
+                        onBack = { previewing = null },
+                        actions = {
+                            TextButton(
+                                onClick = {
+                                    runCatching {
+                                        (ctx as? Activity ?: ctx).startActivity(
+                                            Intent.createChooser(
+                                                Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
+                                                null,
+                                            )
+                                        )
+                                    }.onFailure { err ->
+                                        LocalDiagnostics.recordEvent(ctx, "FG-FILES-OPEN", "files_preview", err.javaClass.simpleName)
+                                        message = "No app found to open this file."
+                                    }
+                                },
+                                modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                            ) { Text(stringResource(R.string.viewer_open_with)) }
+                        },
+                    )
                     FilePreview(uri, mime, Modifier.weight(1f).fillMaxWidth())
                 }
             }

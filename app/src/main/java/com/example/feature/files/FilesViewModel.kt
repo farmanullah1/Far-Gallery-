@@ -11,8 +11,14 @@ import androidx.compose.material.icons.filled.Star
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.R
 import com.example.core.common.FarError
 import com.example.core.common.FarResult
+import com.example.core.common.LocalDiagnostics
+import com.example.core.common.resolveSummary
+import com.example.core.common.resolveTitle
+import com.example.core.common.safeParseMediaUri
+import com.example.core.common.userTitle
 import com.example.core.database.FarDatabase
 import com.example.core.database.FileFavorite
 import com.example.core.database.FolderGrant
@@ -46,6 +52,7 @@ sealed interface FilesEvent {
     data class Share(val uris: List<Uri>) : FilesEvent
     data class AskRename(val entry: FileEntry) : FilesEvent
     data class AskDelete(val entries: List<FileEntry>) : FilesEvent
+    data class AskZip(val entries: List<FileEntry>) : FilesEvent
     data class Properties(val entry: FileEntry, val path: String) : FilesEvent
     data object PickFolder : FilesEvent
     data class Message(val text: String, val undo: Boolean = false) : FilesEvent
@@ -114,9 +121,10 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
             publishStarred()
             return
         }
-        tree = Uri.parse(id)
+        val parsed = safeParseMediaUri(id) ?: return
+        tree = parsed
         stack.clear()
-        val root = ops.rootDocId(tree!!)
+        val root = ops.rootDocId(parsed)
         stack += root to (_ui.value.places.firstOrNull { it.id == id }?.label ?: "Folder")
         _ui.update { it.copy(selectedPlaceId = id, selection = emptySet()) }
         load()
@@ -153,32 +161,28 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
                     raw = res.value
                     publish()
                 }
-                is FarResult.Err -> _ui.update { it.copy(entries = UiState.Failure(errorFor(res.error))) }
+                is FarResult.Err -> {
+                    LocalDiagnostics.recordEvent(ctx, res.error.code, "files_list", res.error.resolveTitle(ctx))
+                    _ui.update { it.copy(entries = UiState.Failure(errorFor(res.error))) }
+                }
             }
         }
     }
 
     private fun errorFor(e: FarError) = when (e) {
         is FarError.PermissionRevoked -> ErrorInfo(
-            "Folder access was removed",
-            "Android no longer lets Far Files open this folder. Your files are unchanged.",
-            true,
-            e.code,
-            listOf(ErrorAction("Choose folder again", true) { _events.tryEmit(FilesEvent.PickFolder) }),
-        )
-        is FarError.ProviderUnavailable, is FarError.VolumeRemoved -> ErrorInfo(
-            "Storage not available",
-            "The drive or app providing this folder isn't responding. It may have been removed.",
-            true,
-            e.code,
-            listOf(ErrorAction("Retry", true) { load() }),
+            title = e.resolveTitle(ctx),
+            whatHappened = e.resolveSummary(ctx),
+            originalsSafe = true,
+            code = e.code,
+            actions = listOf(ErrorAction("Choose folder again", true) { _events.tryEmit(FilesEvent.PickFolder) }),
         )
         else -> ErrorInfo(
-            "Can't open this folder",
-            "Something went wrong reading it. Your files are unchanged.",
-            true,
-            e.code,
-            listOf(ErrorAction("Retry", true) { load() }),
+            title = e.resolveTitle(ctx),
+            whatHappened = e.resolveSummary(ctx),
+            originalsSafe = true,
+            code = e.code,
+            actions = listOf(ErrorAction(ctx.getString(R.string.action_retry), true) { load() }),
         )
     }
 
@@ -186,7 +190,10 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
         val s = _ui.value
         val t = tree
         val starredUris = starredList.map { it.documentUri }.toSet()
-        var list = raw.filter { s.showHidden || !it.name.startsWith(".") }
+        val q = s.searchQuery.trim()
+        var list = raw
+            .filter { s.showHidden || !it.name.startsWith(".") }
+            .filter { q.isEmpty() || it.name.contains(q, ignoreCase = true) }
         val cmp: Comparator<DocEntry> = when (s.sort) {
             SortColumn.Name -> compareBy({ !it.isDir }, { it.name.lowercase() })
             SortColumn.Size -> compareBy({ !it.isDir }, { it.size ?: -1L })
@@ -211,9 +218,10 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
                 isStarred = u in starredUris,
             )
         }
+        val emptyReason = if (q.isNotEmpty()) EmptyReason.NoResults else EmptyReason.EmptyFolder
         _ui.update {
             it.copy(
-                entries = if (entries.isEmpty()) UiState.Empty(EmptyReason.EmptyFolder) else UiState.Content(entries),
+                entries = if (entries.isEmpty()) UiState.Empty(emptyReason) else UiState.Content(entries),
                 clipboardCount = clip?.items?.size ?: 0,
             )
         }
@@ -234,7 +242,7 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
 
     override fun openEntry(e: FileEntry) {
         if (_ui.value.selectedPlaceId == "starred") {
-            val uri = Uri.parse(e.id)
+            val uri = safeParseMediaUri(e.id) ?: return
             _events.tryEmit(FilesEvent.OpenFile(uri, ctx.contentResolver.getType(uri) ?: "*/*"))
             return
         }
@@ -288,6 +296,70 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
     override fun toggleSelect(e: FileEntry) =
         _ui.update { it.copy(selection = if (e.id in it.selection) it.selection - e.id else it.selection + e.id) }
 
+    override fun setSearch(query: String) {
+        _ui.update { it.copy(searchQuery = query) }
+        if (_ui.value.selectedPlaceId == "starred") publishStarred() else publish()
+    }
+
+    override fun selectAll() {
+        val visible = (_ui.value.entries as? UiState.Content)?.data?.map { it.id }?.toSet().orEmpty()
+        _ui.update { it.copy(selection = visible) }
+    }
+
+    override fun clearSelection() {
+        _ui.update { it.copy(selection = emptySet()) }
+    }
+
+    override fun batchAction(action: String) {
+        val t = tree ?: return
+        val selectedDocs = _ui.value.selection.mapNotNull { id -> raw.firstOrNull { it.docId == id } }
+        if (selectedDocs.isEmpty()) return
+        when (action) {
+            "copy" -> {
+                clip = Clip(t, selectedDocs, false)
+                _ui.update { it.copy(selection = emptySet(), clipboardCount = selectedDocs.size) }
+                _events.tryEmit(FilesEvent.Message("${selectedDocs.size} copied. Open a folder and tap Paste."))
+            }
+            "move" -> {
+                clip = Clip(t, selectedDocs, true)
+                _ui.update { it.copy(selection = emptySet(), clipboardCount = selectedDocs.size) }
+                _events.tryEmit(FilesEvent.Message("${selectedDocs.size} ready to move. Open a folder and tap Paste."))
+            }
+            "share" -> {
+                val uris = selectedDocs.filter { !it.isDir }.map { ops.docUri(t, it.docId) }
+                if (uris.isNotEmpty()) _events.tryEmit(FilesEvent.Share(uris))
+                else _events.tryEmit(FilesEvent.Message("Select at least one file to share."))
+            }
+            "zip" -> _events.tryEmit(
+                FilesEvent.AskZip(
+                    selectedDocs.map { d -> FileEntry(d.docId, d.name, d.isDir, d.size, null, "", d.mime, d.canRename, d.canDelete, d.canMove) }
+                )
+            )
+            "delete" -> _events.tryEmit(
+                FilesEvent.AskDelete(
+                    selectedDocs.map { d -> FileEntry(d.docId, d.name, d.isDir, d.size, null, "", d.mime, d.canRename, d.canDelete, d.canMove) }
+                )
+            )
+        }
+    }
+
+    fun confirmCreateZip(entries: List<FileEntry>, archiveName: String) {
+        val t = tree ?: return
+        val parent = stack.lastOrNull()?.first ?: return
+        val docs = entries.mapNotNull { e -> raw.firstOrNull { it.docId == e.id } }
+        if (docs.isEmpty()) return
+        _ui.update { it.copy(selection = emptySet()) }
+        runOp("Creating ZIP", docs.size) { step ->
+            when (val res = ops.createZip(t, parent, docs, archiveName) { done, cur -> step(done.coerceAtMost(docs.size), cur) }) {
+                is FarResult.Ok -> _events.tryEmit(FilesEvent.Message("Created ${res.value}"))
+                is FarResult.Err -> {
+                    LocalDiagnostics.recordEvent(ctx, res.error.code, "files_zip", res.error.userTitle())
+                    _events.tryEmit(FilesEvent.Message("Couldn't create ZIP (${res.error.code})."))
+                }
+            }
+        }
+    }
+
     override fun retry() = load()
 
     override fun newFolder() {
@@ -337,7 +409,10 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
                     step(0, zip.name)
                     when (val res = ops.extractZip(t, parent, zip)) {
                         is FarResult.Ok -> _events.tryEmit(FilesEvent.Message("Extracted ${res.value} file(s)"))
-                        is FarResult.Err -> _events.tryEmit(FilesEvent.Message("ZIP extraction stopped (${res.error.code}). Original archive is intact."))
+                        is FarResult.Err -> {
+                            LocalDiagnostics.recordEvent(ctx, res.error.code, "files_unzip", res.error.userTitle())
+                            _events.tryEmit(FilesEvent.Message("ZIP extraction stopped (${res.error.code}). Original archive is intact."))
+                        }
                     }
                 }
             }
@@ -356,9 +431,12 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
             return
         }
         viewModelScope.launch(Dispatchers.IO) {
-            when (ops.rename(t, e.id, newName)) {
+            when (val res = ops.rename(t, e.id, newName)) {
                 is FarResult.Ok -> load()
-                is FarResult.Err -> _events.tryEmit(FilesEvent.Message("This provider doesn't allow renaming here."))
+                is FarResult.Err -> {
+                    LocalDiagnostics.recordEvent(ctx, res.error.code, "files_rename", res.error.userTitle())
+                    _events.tryEmit(FilesEvent.Message("This provider doesn't allow renaming here."))
+                }
             }
         }
     }
@@ -369,7 +447,11 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
             var failed = 0
             entries.forEachIndexed { i, e ->
                 step(i, e.name)
-                if (ops.delete(t, e.id) is FarResult.Err) failed++
+                val res = ops.delete(t, e.id)
+                if (res is FarResult.Err) {
+                    failed++
+                    LocalDiagnostics.recordEvent(ctx, res.error.code, "files_delete", res.error.userTitle())
+                }
             }
             if (failed > 0) _events.tryEmit(FilesEvent.Message("$failed item(s) couldn't be deleted. They were left in place."))
         }
@@ -403,12 +485,8 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
                     }
                     is OpEvent.Aborted -> {
                         _operation.value = null
-                        _events.tryEmit(
-                            FilesEvent.Message(
-                                if (ev.error is FarError.StorageFull) "Not enough space. Nothing was removed from the source."
-                                else "The transfer stopped. Source files are safe."
-                            )
-                        )
+                        LocalDiagnostics.recordEvent(ctx, ev.error.code, "files_transfer", ev.error.resolveTitle(ctx))
+                        _events.tryEmit(FilesEvent.Message(ev.error.resolveSummary(ctx)))
                         load()
                     }
                 }

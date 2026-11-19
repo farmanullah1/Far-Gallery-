@@ -7,6 +7,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -62,7 +63,9 @@ import com.example.ui.glass.GlassKind
 import com.example.ui.glass.glass
 import com.example.ui.theme.FarMotion
 import com.example.ui.theme.LocalHapticsEnabled
+import com.example.ui.theme.LocalIsDark
 import com.example.ui.theme.LocalReducedMotion
+import com.example.ui.theme.LocalSemanticColors
 import dev.chrisbanes.haze.HazeState
 
 enum class FarTab(
@@ -99,7 +102,7 @@ fun GlassBottomBar(
                 .fillMaxWidth()
                 .navigationBarsPadding()
                 .padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             TabPill(glass, selected, onSelect, Modifier.weight(1f))
@@ -119,32 +122,39 @@ fun GlassNavRail(
 ) {
     val haptic = LocalHapticFeedback.current
     val hapticsOn = LocalHapticsEnabled.current
+    val isDark = LocalIsDark.current
+    val semantic = LocalSemanticColors.current
     Column(
         modifier
             .fillMaxHeight()
             .statusBarsPadding()
             .navigationBarsPadding()
-            .padding(start = 12.dp, top = 16.dp, bottom = 16.dp, end = 4.dp),
+            .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Column(
             Modifier
-                .width(80.dp)
-                .glass(glass, RoundedCornerShape(28.dp), GlassKind.Bar)
-                .padding(vertical = 12.dp, horizontal = 6.dp),
+                .width(74.dp)
+                .glass(glass, RoundedCornerShape(26.dp), GlassKind.Bar)
+                .border(0.75.dp, semantic.cardBorder, RoundedCornerShape(26.dp))
+                .padding(vertical = 10.dp, horizontal = 6.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             FarTab.entries.forEach { tab ->
                 val isSel = tab == selected
                 val label = stringResource(tab.labelRes)
+                val fg = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                 Column(
                     Modifier
                         .fillMaxWidth()
-                        .height(56.dp)
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(if (isSel) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else Color.Transparent)
+                        .height(52.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(
+                            if (isSel) MaterialTheme.colorScheme.primary.copy(alpha = if (isDark) 0.24f else 0.14f)
+                            else Color.Transparent
+                        )
                         .testTag(tab.tag)
                         .semantics { role = Role.Tab; this.selected = isSel; contentDescription = label }
                         .clickable {
@@ -159,13 +169,15 @@ fun GlassNavRail(
                     Icon(
                         if (isSel) tab.filled else tab.outlined,
                         contentDescription = null,
-                        modifier = Modifier.size(22.dp),
-                        tint = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                        tint = fg,
                     )
                     Text(
                         label,
                         style = MaterialTheme.typography.labelMedium,
-                        color = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        color = fg,
                     )
                 }
             }
@@ -180,11 +192,14 @@ private fun TabPill(glass: HazeState, selected: FarTab, onSelect: (FarTab) -> Un
     val reduced = LocalReducedMotion.current
     val haptic = LocalHapticFeedback.current
     val hapticsOn = LocalHapticsEnabled.current
+    val isDark = LocalIsDark.current
+    val semantic = LocalSemanticColors.current
     val tabs = FarTab.entries
     BoxWithConstraints(
         modifier
-            .height(64.dp)
-            .glass(glass, RoundedCornerShape(32.dp))
+            .height(56.dp)
+            .glass(glass, RoundedCornerShape(28.dp))
+            .border(0.75.dp, semantic.cardBorder, RoundedCornerShape(28.dp))
             .padding(4.dp)
     ) {
         val tabWidth = maxWidth / tabs.size
@@ -193,17 +208,21 @@ private fun TabPill(glass: HazeState, selected: FarTab, onSelect: (FarTab) -> Un
             Modifier
                 .offset(x = indicatorX)
                 .width(tabWidth)
-                .height(56.dp)
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f), RoundedCornerShape(28.dp))
+                .height(48.dp)
+                .background(
+                    MaterialTheme.colorScheme.primary.copy(alpha = if (isDark) 0.24f else 0.14f),
+                    RoundedCornerShape(24.dp),
+                )
         )
         Row(Modifier.fillMaxWidth()) {
             tabs.forEach { tab ->
                 val isSel = tab == selected
                 val label = stringResource(tab.labelRes)
+                val fg = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                 Column(
                     Modifier
                         .width(tabWidth)
-                        .height(56.dp)
+                        .height(48.dp)
                         .testTag(tab.tag)
                         .semantics { role = Role.Tab; this.selected = isSel; contentDescription = label }
                         .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
@@ -218,14 +237,15 @@ private fun TabPill(glass: HazeState, selected: FarTab, onSelect: (FarTab) -> Un
                     Icon(
                         if (isSel) tab.filled else tab.outlined,
                         contentDescription = null,
-                        modifier = Modifier.size(22.dp),
-                        tint = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                        tint = fg,
                     )
                     Text(
                         label,
                         style = MaterialTheme.typography.labelMedium,
                         maxLines = 1,
-                        color = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        color = fg,
                     )
                 }
             }
@@ -237,11 +257,13 @@ private fun TabPill(glass: HazeState, selected: FarTab, onSelect: (FarTab) -> Un
 private fun CameraButton(glass: HazeState, onClick: () -> Unit) {
     val haptic = LocalHapticFeedback.current
     val hapticsOn = LocalHapticsEnabled.current
+    val semantic = LocalSemanticColors.current
     val desc = stringResource(R.string.cd_open_camera)
     Box(
         Modifier
-            .size(64.dp)
+            .size(56.dp)
             .glass(glass, CircleShape, GlassKind.Bar)
+            .border(0.75.dp, semantic.cardBorder, CircleShape)
             .testTag("camera_shortcut_button")
             .semantics { role = Role.Button; contentDescription = desc }
             .clickable {
@@ -250,6 +272,6 @@ private fun CameraButton(glass: HazeState, onClick: () -> Unit) {
             },
         contentAlignment = Alignment.Center,
     ) {
-        Icon(Icons.Filled.PhotoCamera, null, Modifier.size(28.dp), tint = MaterialTheme.colorScheme.onSurface)
+        Icon(Icons.Filled.PhotoCamera, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurface)
     }
 }

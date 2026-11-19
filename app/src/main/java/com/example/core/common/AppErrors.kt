@@ -62,8 +62,10 @@ inline fun <T> farCatching(block: () -> T): FarResult<T> = try {
     FarResult.Err(FarError.Unknown())
 }
 
-/** Privacy-safe local crash note utilities (no file names, URIs, GPS, or OCR text). */
+/** Privacy-safe local crash & error log utilities (no file names, URIs, GPS, or OCR text). */
 object LocalDiagnostics {
+    private const val MAX_LOG_LINES = 30
+
     fun readLastCrash(ctx: Context): String? {
         val f = File(ctx.filesDir, "last_crash.txt")
         return if (f.exists()) runCatching { f.readText().takeIf { it.isNotBlank() } }.getOrNull() else null
@@ -72,6 +74,105 @@ object LocalDiagnostics {
     fun dismissLastCrash(ctx: Context) {
         runCatching { File(ctx.filesDir, "last_crash.txt").delete() }
     }
+
+    fun recordEvent(ctx: Context, code: String, area: String, detail: String = "") {
+        runCatching {
+            val f = File(ctx.filesDir, "diagnostics.log")
+            val existing = if (f.exists()) f.readLines() else emptyList()
+            val safeDetail = detail.replace('\n', ' ').take(80)
+            val entry = "${System.currentTimeMillis()}|$code|$area|$safeDetail"
+            val trimmed = (existing + entry).takeLast(MAX_LOG_LINES)
+            f.writeText(trimmed.joinToString("\n"))
+        }
+    }
+
+    fun readEvents(ctx: Context): List<String> {
+        val f = File(ctx.filesDir, "diagnostics.log")
+        return if (f.exists()) runCatching { f.readLines().filter { it.isNotBlank() }.asReversed() }.getOrDefault(emptyList())
+        else emptyList()
+    }
+
+    fun clearAll(ctx: Context) {
+        runCatching {
+            File(ctx.filesDir, "last_crash.txt").delete()
+            File(ctx.filesDir, "diagnostics.log").delete()
+        }
+    }
+
+    fun buildReport(ctx: Context): String = buildString {
+        appendLine("Far Gallery Local Diagnostics (offline, zero PII)")
+        appendLine("SDK: ${android.os.Build.VERSION.SDK_INT}")
+        readLastCrash(ctx)?.let { appendLine("Last crash: $it") }
+        val events = readEvents(ctx)
+        if (events.isEmpty()) {
+            appendLine("Recent error events: none")
+        } else {
+            appendLine("Recent error events (${events.size}):")
+            events.forEach { appendLine(" - $it") }
+        }
+    }.trim()
+}
+
+fun FarError.userTitle(): String = when (this) {
+    is FarError.Unsupported -> "Unsupported file format"
+    is FarError.Corrupt -> "Damaged or unreadable file"
+    is FarError.Missing -> "File not found"
+    is FarError.PermissionRevoked -> "Permission required"
+    is FarError.StorageFull -> "Not enough storage space"
+    is FarError.VolumeRemoved -> "Storage drive disconnected"
+    is FarError.ProviderUnavailable -> "Media provider unavailable"
+    is FarError.OutOfMemory -> "Image too large to process"
+    is FarError.Io -> "File read/write failed"
+    is FarError.InvalidInput -> "Invalid operation"
+    is FarError.Unknown -> "Unexpected problem"
+}
+
+fun FarError.userSummary(): String = when (this) {
+    is FarError.Unsupported -> "This format isn't supported here ($reason)."
+    is FarError.Corrupt -> "The file appears damaged or incomplete. Originals are untouched."
+    is FarError.Missing -> "The item was moved or deleted outside Far Gallery."
+    is FarError.PermissionRevoked -> "Android blocked access to $scope. Re-grant access to continue."
+    is FarError.StorageFull -> "Free up space on your device and try again."
+    is FarError.VolumeRemoved -> "The SD card or USB volume is no longer mounted."
+    is FarError.ProviderUnavailable -> "The storage provider stopped responding. Try again shortly."
+    is FarError.OutOfMemory -> "Try processing a smaller batch or lower resolution."
+    is FarError.Io -> "An I/O error prevented completion. Original files are safe."
+    is FarError.InvalidInput -> "Check your input and try again ($reason)."
+    is FarError.Unknown -> "Something went wrong, but your original files were not modified."
+}
+
+fun FarError.resolveTitle(ctx: Context): String = when (this) {
+    is FarError.Unsupported -> ctx.getString(com.example.R.string.err_unsupported_title)
+    is FarError.Corrupt -> ctx.getString(com.example.R.string.err_corrupt_title)
+    is FarError.Missing -> ctx.getString(com.example.R.string.err_missing_title)
+    is FarError.PermissionRevoked -> ctx.getString(com.example.R.string.err_permission_title)
+    is FarError.StorageFull -> ctx.getString(com.example.R.string.err_storage_title)
+    is FarError.VolumeRemoved -> ctx.getString(com.example.R.string.err_volume_title)
+    is FarError.ProviderUnavailable -> ctx.getString(com.example.R.string.err_provider_title)
+    is FarError.OutOfMemory -> ctx.getString(com.example.R.string.err_oom_title)
+    is FarError.Io -> ctx.getString(com.example.R.string.err_io_title)
+    is FarError.InvalidInput -> ctx.getString(com.example.R.string.err_invalid_title)
+    is FarError.Unknown -> ctx.getString(com.example.R.string.err_unknown_title)
+}
+
+fun FarError.resolveSummary(ctx: Context): String = when (this) {
+    is FarError.Unsupported -> ctx.getString(com.example.R.string.err_unsupported_summary, reason)
+    is FarError.Corrupt -> ctx.getString(com.example.R.string.err_corrupt_summary)
+    is FarError.Missing -> ctx.getString(com.example.R.string.err_missing_summary)
+    is FarError.PermissionRevoked -> ctx.getString(com.example.R.string.err_permission_summary, scope)
+    is FarError.StorageFull -> ctx.getString(com.example.R.string.err_storage_summary)
+    is FarError.VolumeRemoved -> ctx.getString(com.example.R.string.err_volume_summary)
+    is FarError.ProviderUnavailable -> ctx.getString(com.example.R.string.err_provider_summary)
+    is FarError.OutOfMemory -> ctx.getString(com.example.R.string.err_oom_summary)
+    is FarError.Io -> ctx.getString(com.example.R.string.err_io_summary)
+    is FarError.InvalidInput -> ctx.getString(com.example.R.string.err_invalid_summary, reason)
+    is FarError.Unknown -> ctx.getString(com.example.R.string.err_unknown_summary)
+}
+
+fun safeParseMediaUri(raw: String?): Uri? {
+    if (raw.isNullOrBlank()) return null
+    return runCatching { Uri.parse(raw) }.getOrNull()
+        ?.takeIf { it.scheme == ContentResolver.SCHEME_CONTENT || it.scheme == ContentResolver.SCHEME_FILE }
 }
 
 /** ---------- Incoming media validation ---------- */

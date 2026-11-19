@@ -62,6 +62,8 @@ data class MediaFilter(
     val pathContains: String? = null,
     val excludedPaths: List<String> = emptyList(),
     val minSizeBytes: Long? = null,
+    val minDateMs: Long? = null,
+    val maxDateMs: Long? = null,
     val onlyIds: Set<Long>? = null,
     val forceEmpty: Boolean = false,
     val trashedOnly: Boolean = false,
@@ -173,6 +175,18 @@ internal fun queryMediaStore(
         sel.append(" AND ${MediaStore.MediaColumns.SIZE} >= ?")
         args += it.toString()
     }
+    filter.minDateMs?.let {
+        val sec = (it / 1000L).toString()
+        sel.append(" AND ((${MediaStore.MediaColumns.DATE_TAKEN} >= ?) OR (${MediaStore.MediaColumns.DATE_TAKEN} IS NULL AND ${MediaStore.MediaColumns.DATE_ADDED} >= ?))")
+        args += it.toString()
+        args += sec
+    }
+    filter.maxDateMs?.let {
+        val sec = (it / 1000L).toString()
+        sel.append(" AND ((${MediaStore.MediaColumns.DATE_TAKEN} <= ?) OR (${MediaStore.MediaColumns.DATE_TAKEN} IS NULL AND ${MediaStore.MediaColumns.DATE_ADDED} <= ?))")
+        args += it.toString()
+        args += sec
+    }
     filter.onlyIds?.let { ids ->
         if (ids.isEmpty()) return emptyList()
         sel.append(" AND ${MediaStore.MediaColumns._ID} IN (${ids.joinToString(",")})")
@@ -212,34 +226,37 @@ internal fun queryMediaStore(
     )
     val out = ArrayList<MediaRow>(limit.coerceAtMost(500))
     resolver.query(base, projection, bundle, null)?.use { c ->
-        val iId = c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
-        val iName = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
-        val iMime = c.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE)
-        val iType = c.getColumnIndexOrThrow(MediaStore.Files.FileColumns.MEDIA_TYPE)
-        val iSize = c.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)
-        val iTaken = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_TAKEN)
-        val iAdded = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED)
-        val iDur = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DURATION)
-        val iW = c.getColumnIndexOrThrow(MediaStore.MediaColumns.WIDTH)
-        val iH = c.getColumnIndexOrThrow(MediaStore.MediaColumns.HEIGHT)
-        val iPath = c.getColumnIndexOrThrow(MediaStore.MediaColumns.RELATIVE_PATH)
+        val iId = c.getColumnIndex(MediaStore.MediaColumns._ID)
+        val iName = c.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME)
+        val iMime = c.getColumnIndex(MediaStore.MediaColumns.MIME_TYPE)
+        val iType = c.getColumnIndex(MediaStore.Files.FileColumns.MEDIA_TYPE)
+        val iSize = c.getColumnIndex(MediaStore.MediaColumns.SIZE)
+        val iTaken = c.getColumnIndex(MediaStore.MediaColumns.DATE_TAKEN)
+        val iAdded = c.getColumnIndex(MediaStore.MediaColumns.DATE_ADDED)
+        val iDur = c.getColumnIndex(MediaStore.MediaColumns.DURATION)
+        val iW = c.getColumnIndex(MediaStore.MediaColumns.WIDTH)
+        val iH = c.getColumnIndex(MediaStore.MediaColumns.HEIGHT)
+        val iPath = c.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH)
+        if (iId < 0 || iType < 0) return out
         while (c.moveToNext()) {
             val isVideo = c.getInt(iType) == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO
             val id = c.getLong(iId)
-            val taken = c.getLong(iTaken).takeIf { it > 0 } ?: (c.getLong(iAdded) * 1000)
+            val takenRaw = if (iTaken >= 0 && !c.isNull(iTaken)) c.getLong(iTaken) else 0L
+            val addedSec = if (iAdded >= 0 && !c.isNull(iAdded)) c.getLong(iAdded) else 0L
+            val taken = takenRaw.takeIf { it > 0L } ?: (addedSec * 1000L)
             val collection = if (isVideo) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
             out += MediaRow(
                 id = id,
                 uri = ContentUris.withAppendedId(collection, id),
-                name = c.getString(iName).orEmpty(),
-                mime = c.getString(iMime).orEmpty(),
+                name = if (iName >= 0 && !c.isNull(iName)) c.getString(iName).orEmpty() else "",
+                mime = if (iMime >= 0 && !c.isNull(iMime)) c.getString(iMime).orEmpty() else "",
                 isVideo = isVideo,
-                sizeBytes = c.getLong(iSize),
+                sizeBytes = if (iSize >= 0 && !c.isNull(iSize)) c.getLong(iSize).coerceAtLeast(0L) else 0L,
                 takenMs = taken,
-                durationMs = c.getLong(iDur),
-                width = c.getInt(iW),
-                height = c.getInt(iH),
-                relativePath = c.getString(iPath),
+                durationMs = if (iDur >= 0 && !c.isNull(iDur)) c.getLong(iDur).coerceAtLeast(0L) else 0L,
+                width = if (iW >= 0 && !c.isNull(iW)) c.getInt(iW) else 0,
+                height = if (iH >= 0 && !c.isNull(iH)) c.getInt(iH) else 0,
+                relativePath = if (iPath >= 0 && !c.isNull(iPath)) c.getString(iPath) else null,
             )
         }
     }
@@ -310,24 +327,30 @@ class GalleryViewModel(
             }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val items: Flow<PagingData<GalleryItem>> =
-        combine(filter, sort, descending, excludedFolders, zoom) { f, s, d, ex, z -> Params(f.copy(excludedPaths = ex), s, d, z) }
-            .flatMapLatest { p ->
-                combine(
-                    repo.pager(p.filter, p.sort, p.desc).cachedIn(viewModelScope),
-                    favoriteIds,
-                ) { page, favs ->
-                    page.map<MediaRow, GalleryItem> { it.toItem(favs) }.withHeaders(p.zoom)
-                }
-            }.cachedIn(viewModelScope)
+    private val queryTrigger: Flow<Params> = combine(
+        combine(filter, sort, descending) { f, s, d -> Triple(f, s, d) },
+        combine(excludedFolders, zoom, refreshNonce) { ex, z, n -> Triple(ex, z, n) },
+    ) { (f, s, d), (ex, z, n) ->
+        Params(f.copy(excludedPaths = ex), s, d, z, n)
+    }
 
-    private data class Params(val filter: MediaFilter, val sort: SortKey, val desc: Boolean, val zoom: LibraryZoom)
+    val items: Flow<PagingData<GalleryItem>> = queryTrigger
+        .flatMapLatest { p ->
+            repo.pager(p.filter, p.sort, p.desc).map { page ->
+                page.map<MediaRow, GalleryItem> { it.toItem(emptySet()) }.withHeaders(p.zoom, p.sort)
+            }
+        }
+        .cachedIn(viewModelScope)
+
+    private data class Params(val filter: MediaFilter, val sort: SortKey, val desc: Boolean, val zoom: LibraryZoom, val nonce: Int)
 
     fun refreshAll() {
         refreshNonce.value++
     }
 
     fun setKind(k: MediaKind) { filter.value = filter.value.copy(kind = k) }
+    fun setSort(s: SortKey) { sort.value = s }
+    fun toggleSortDirection() { descending.value = !descending.value }
     fun toggleSelect(id: Long) { selection.value = selection.value.let { if (id in it) it - id else it + id } }
     fun setSelected(ids: Set<Long>) { selection.value = ids }
     fun clearSelection() { selection.value = emptySet() }
@@ -335,6 +358,14 @@ class GalleryViewModel(
     fun toggleFavorite(id: Long) = viewModelScope.launch {
         if (id in favoriteIds.value) db.favorites().remove(id)
         else db.favorites().add(FavoriteEntity(id, System.currentTimeMillis()))
+    }
+
+    fun setFavorites(ids: Collection<Long>, favorite: Boolean) = viewModelScope.launch {
+        val now = System.currentTimeMillis()
+        ids.forEach { id ->
+            if (favorite) db.favorites().add(FavoriteEntity(id, now))
+            else db.favorites().remove(id)
+        }
     }
 
     fun createAlbum(name: String, description: String? = null) = viewModelScope.launch {
@@ -418,9 +449,10 @@ private fun Long.toClock(): String {
     else "%d:%02d".format(s / 60, s % 60)
 }
 
-/** Date headers: granularity follows the Years / Months / Days / All control. */
-private fun PagingData<GalleryItem>.withHeaders(zoom: LibraryZoom): PagingData<GalleryItem> =
-    insertSeparators { before, after ->
+/** Date headers: granularity follows the Years / Months / Days / All control (skipped on Name/Size sorts). */
+private fun PagingData<GalleryItem>.withHeaders(zoom: LibraryZoom, sort: SortKey): PagingData<GalleryItem> {
+    if (sort == SortKey.Name || sort == SortKey.Size) return this
+    return insertSeparators { before, after ->
         val a = after as? GalleryItem.Media ?: return@insertSeparators null
         val b = before as? GalleryItem.Media
         val ma = a.takenDate()
@@ -430,8 +462,11 @@ private fun PagingData<GalleryItem>.withHeaders(zoom: LibraryZoom): PagingData<G
             LibraryZoom.Months -> { d -> d.year * 100 + d.monthValue }
             else -> { d -> d }
         }
-        if (mb == null || key(ma) != key(mb)) GalleryItem.Header(headerLabel(ma, zoom)) else null
+        if (mb == null || key(ma) != key(mb)) {
+            GalleryItem.Header(title = headerLabel(ma, zoom), anchorId = a.id)
+        } else null
     }
+}
 
 private fun GalleryItem.Media.takenDate(): LocalDate =
     Instant.ofEpochMilli(takenMs).atZone(ZoneId.systemDefault()).toLocalDate()

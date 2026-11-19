@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -35,6 +36,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.ui.brand.FarLogo
+import com.example.ui.theme.FarSpacing
 import kotlinx.coroutines.launch
 
 /**
@@ -63,7 +65,7 @@ fun OnboardingScreen(
             Modifier
                 .widthIn(max = 560.dp)
                 .fillMaxSize()
-                .padding(24.dp),
+                .padding(horizontal = FarSpacing.screenPadding, vertical = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             HorizontalPager(pager, Modifier.weight(1f)) { page ->
@@ -109,6 +111,7 @@ fun OnboardingScreen(
                         },
                         modifier = Modifier.padding(top = 28.dp),
                         style = MaterialTheme.typography.displayLarge,
+                        color = MaterialTheme.colorScheme.onBackground,
                         textAlign = TextAlign.Center,
                     )
                     Text(
@@ -142,17 +145,19 @@ fun OnboardingScreen(
                     onClick = { scope.launch { pager.animateScrollToPage(pager.currentPage + 1) } },
                     modifier = Modifier
                         .fillMaxWidth()
+                        .defaultMinSize(minHeight = 48.dp)
                         .testTag("onboarding_continue_button"),
                 ) { Text(stringResource(R.string.onboarding_continue)) }
                 TextButton(
                     onClick = onSkip,
-                    modifier = Modifier.testTag("onboarding_skip_button"),
+                    modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("onboarding_skip_button"),
                 ) { Text(stringResource(R.string.onboarding_skip)) }
             } else {
                 Button(
                     onClick = onFullAccess,
                     modifier = Modifier
                         .fillMaxWidth()
+                        .defaultMinSize(minHeight = 48.dp)
                         .testTag("onboarding_full_access_button"),
                 ) { Text(stringResource(R.string.onboarding_allow_full)) }
                 OutlinedButton(
@@ -160,11 +165,12 @@ fun OnboardingScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 8.dp)
+                        .defaultMinSize(minHeight = 48.dp)
                         .testTag("onboarding_selected_only_button"),
                 ) { Text(stringResource(R.string.onboarding_choose_selected)) }
                 TextButton(
                     onClick = onSkip,
-                    modifier = Modifier.testTag("onboarding_skip_now_button"),
+                    modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("onboarding_skip_now_button"),
                 ) { Text(stringResource(R.string.onboarding_skip_now)) }
             }
         }

@@ -96,11 +96,17 @@ fun CameraHost(
             r[Manifest.permission.CAMERA] == true ||
                 ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
         )
+        vm.micPermission(
+            r[Manifest.permission.RECORD_AUDIO] == true ||
+                ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        )
     }
 
     LaunchedEffect(Unit) {
         val has = ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+        val hasMic = ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         vm.permission(has)
+        vm.micPermission(hasMic)
         if (!has) launcher.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO))
     }
 

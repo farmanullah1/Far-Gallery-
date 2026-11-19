@@ -67,6 +67,7 @@
     <string name="collection_screenshots">Screenshots</string>
     <string name="collection_camera">Camera</string>
     <string name="collection_duplicates">Duplicates</string>
+    <string name="collection_storage_cleanup">Storage &amp; Cleanup</string>
     <string name="collection_trash">Recently Deleted</string>
     <string name="collection_excluded">Excluded Folders</string>
     <string name="exclude_not_security_note">Files are not moved or deleted. This is an exclusion filter only, not a security feature.</string>
@@ -78,10 +79,190 @@
     <string name="settings_photos">Photos</string>
     <string name="settings_camera">Camera</string>
     <string name="settings_privacy_data">Privacy and data</string>
+    <string name="settings_diagnostics">Diagnostics and recovery</string>
     <string name="settings_about">About</string>
     <string name="settings_language">Language</string>
     <string name="language_system">System default</string>
     <string name="language_en">English</string>
     <string name="language_ur">اردو (Urdu)</string>
     <string name="about_offline_note">Far Gallery works offline and needs no account. This build has no internet permission and no hidden vault.</string>
+
+    <!-- Viewer, Compare & Histogram -->
+    <string name="viewer_compare">Compare</string>
+    <string name="viewer_histogram">Histogram</string>
+    <string name="viewer_details">Details</string>
+    <string name="viewer_add_to_album">Add to album</string>
+    <string name="viewer_item_unavailable">Item unavailable</string>
+    <string name="viewer_item_unavailable_body">This media item could not be opened or was moved.</string>
+    <string name="viewer_preview_unavailable">Preview unavailable</string>
+    <string name="viewer_preview_unavailable_body">This image is damaged or uses a format this device cannot display.</string>
+    <string name="viewer_open_with">Open with…</string>
+    <string name="compare_title">Compare Photos</string>
+    <string name="compare_sync_on">Sync zoom: On</string>
+    <string name="compare_sync_off">Sync zoom: Off</string>
+    <string name="compare_keep_left">Keep Left</string>
+    <string name="compare_keep_right">Keep Right</string>
+    <string name="compare_pick_second">Choose second photo</string>
+    <string name="histogram_title">Histogram</string>
+    <string name="histogram_clipped_shadows">Shadows %1$d%%</string>
+    <string name="histogram_clipped_highlights">Highlights %1$d%%</string>
+
+    <!-- Batch Resize, Rename & Trash Manager -->
+    <string name="batch_all">All</string>
+    <string name="batch_fav">Fav</string>
+    <string name="batch_unfav">Unfav</string>
+    <string name="batch_album">Album</string>
+    <string name="batch_resize">Resize</string>
+    <string name="batch_rename">Rename</string>
+    <string name="batch_compare">Compare</string>
+    <string name="batch_resize_title">Batch Resize &amp; Convert</string>
+    <string name="batch_rename_title">Batch Rename (%1$d)</string>
+    <string name="batch_rename_prefix">Filename prefix</string>
+    <string name="batch_rename_start">Start number</string>
+    <string name="batch_rename_preview">Preview: %1$s</string>
+    <string name="batch_quality">Quality %1$d%%</string>
+    <string name="batch_strip_exif">Strip GPS &amp; EXIF metadata</string>
+    <string name="trash_title">Recently Deleted</string>
+    <string name="trash_restore_selected">Restore (%1$d)</string>
+    <string name="trash_restore_all">Restore all</string>
+    <string name="trash_empty_all">Empty trash</string>
+    <string name="trash_empty_confirm_title">Permanently delete %1$d item(s)?</string>
+    <string name="trash_empty_confirm_body">Android will ask for confirmation. Permanently deleted items cannot be recovered.</string>
+    <string name="trash_empty_title">Trash is empty</string>
+    <string name="trash_empty_body">Deleted photos and videos appear here before permanent removal.</string>
+
+    <!-- Diagnostics, Tile & Home Widget -->
+    <string name="diagnostics_copy_report">Copy diagnostics report</string>
+    <string name="diagnostics_clear_logs">Clear diagnostics</string>
+    <string name="diagnostics_copied">Diagnostics report copied</string>
+    <string name="diagnostics_cleared">Diagnostics cleared</string>
+    <string name="diagnostics_no_events">No errors or crashes logged locally.</string>
+    <string name="qs_tile_theme">Theme: %1$s</string>
+    <string name="widget_title">Far Gallery</string>
+    <string name="widget_photos">Photos</string>
+    <string name="widget_videos">Videos</string>
+    <string name="widget_favorites">Favorites</string>
+    <string name="widget_description">Shows your offline photo, video, favorites, and storage totals with quick shortcuts.</string>
+
+    <!-- Gallery Errors & Empty States -->
+    <string name="gallery_load_error_title">Can\'t load your library</string>
+    <string name="gallery_load_error_body">Far Gallery couldn\'t read the media index just now.</string>
+    <string name="gallery_append_error">Couldn\'t load older items.</string>
+    <string name="gallery_empty_title">No photos or videos yet</string>
+    <string name="gallery_empty_no_access">Far Gallery can only show media it has access to. Allow access, or pick photos to share.</string>
+    <string name="gallery_empty_with_access">Photos and videos on this device or matching this filter will appear here.</string>
+    <string name="gallery_review_access">Review access</string>
+    <string name="camera_mic_muted">Muted (mic off)</string>
+
+    <!-- Theme Mode Cycling -->
+    <string name="theme_system">Auto</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+    <string name="theme_amoled">AMOLED</string>
+    <string name="theme_switched">Theme: %1$s</string>
+    <string name="cd_cycle_theme">Switch theme</string>
+
+    <!-- Localized Error Copy -->
+    <string name="error_originals_safe">Your original files have not been changed.</string>
+    <string name="err_unsupported_title">Unsupported file format</string>
+    <string name="err_unsupported_summary">This format isn\'t supported here (%1$s).</string>
+    <string name="err_corrupt_title">Damaged or unreadable file</string>
+    <string name="err_corrupt_summary">The file appears damaged or incomplete. Originals are untouched.</string>
+    <string name="err_missing_title">File not found</string>
+    <string name="err_missing_summary">The item was moved or deleted outside Far Gallery.</string>
+    <string name="err_permission_title">Permission required</string>
+    <string name="err_permission_summary">Android blocked access to %1$s. Re-grant access to continue.</string>
+    <string name="err_storage_title">Not enough storage space</string>
+    <string name="err_storage_summary">Free up space on your device and try again.</string>
+    <string name="err_volume_title">Storage drive disconnected</string>
+    <string name="err_volume_summary">The SD card or USB volume is no longer mounted.</string>
+    <string name="err_provider_title">Media provider unavailable</string>
+    <string name="err_provider_summary">The storage provider stopped responding. Try again shortly.</string>
+    <string name="err_oom_title">Image too large to process</string>
+    <string name="err_oom_summary">Try processing a smaller batch or lower resolution.</string>
+    <string name="err_io_title">File read/write failed</string>
+    <string name="err_io_summary">An I/O error prevented completion. Original files are safe.</string>
+    <string name="err_invalid_title">Invalid operation</string>
+    <string name="err_invalid_summary">Check your input and try again (%1$s).</string>
+    <string name="err_unknown_title">Unexpected problem</string>
+    <string name="err_unknown_summary">Something went wrong, but your original files were not modified.</string>
+
+    <!-- Shared Progress & Controls -->
+    <string name="progress_count_of">%1$d of %2$d</string>
+    <string name="progress_eta_sec">%1$ds left</string>
+    <string name="action_pause">Pause</string>
+    <string name="action_resume">Resume</string>
+    <string name="action_dismiss">Dismiss</string>
+    <string name="action_clear">Clear</string>
+    <string name="action_clear_all">Reset filters</string>
+    <string name="action_copy">Copy</string>
+    <string name="action_move">Move</string>
+    <string name="action_open">Open</string>
+
+    <!-- Filter & Search Localization -->
+    <string name="filter_videos">Videos</string>
+    <string name="filter_date">Date</string>
+    <string name="filter_size">Size</string>
+    <string name="search_placeholder">File name, tag, or photo text…</string>
+    <string name="search_ocr_title">On-device image text (OCR)</string>
+    <string name="search_ocr_indexing">Indexing photos… %1$d%%</string>
+    <string name="search_ocr_disabled">Turned off in Settings</string>
+    <string name="search_ocr_limited">%1$d indexed (selected access)</string>
+    <string name="search_ocr_ready">%1$d photos indexed locally</string>
+    <string name="search_scan_now">Scan now</string>
+    <string name="search_recent">Recent</string>
+    <string name="search_tip">Search file names, tags, and text inside photos. Refine with scope, date, or size.</string>
+    <string name="search_empty_title">No matching items</string>
+    <string name="search_empty_indexing_title">Still indexing (%1$d%%)</string>
+    <string name="search_empty_body">Try clearing date or size filters or changing spelling.</string>
+    <string name="search_empty_indexing_body">Text in images isn\'t fully searchable yet. File-name results are complete.</string>
+    <string name="search_empty_limited_body">Far Gallery can only search the photos you\'ve allowed.</string>
+
+    <!-- Albums, Files, Camera, Editor & Video -->
+    <string name="albums_empty_title">No albums yet</string>
+    <string name="albums_empty_body">Create an album to collect photos from anywhere. Original files stay where they are.</string>
+    <string name="albums_new">New album</string>
+    <string name="albums_sort">Sort albums</string>
+    <string name="files_locations">Locations</string>
+    <string name="files_filter_hint">Filter this folder…</string>
+    <string name="files_empty_title">This folder is empty</string>
+    <string name="files_empty_body">Nothing to show here.</string>
+    <string name="files_no_match_title">No matching files</string>
+    <string name="files_no_match_body">No files in this folder match \"%1$s\".</string>
+    <string name="files_clear_search">Clear search</string>
+    <string name="camera_perm_title">Camera access needed</string>
+    <string name="camera_perm_body">Allow camera access to take photos and videos. The rest of Far Gallery keeps working without it.</string>
+    <string name="camera_perm_allow">Allow camera</string>
+    <string name="editor_save_copy">Save copy</string>
+    <string name="editor_saving">Saving…</string>
+    <string name="editor_undo">Undo</string>
+    <string name="editor_redo">Redo</string>
+    <string name="editor_reset">Reset</string>
+    <string name="editor_hold_compare">Hold photo to compare</string>
+    <string name="editor_discard_title">Discard edits?</string>
+    <string name="editor_discard_body">Your original photo will stay untouched.</string>
+    <string name="editor_discard">Discard</string>
+    <string name="editor_keep">Keep editing</string>
+    <string name="viewer_no_exif">No camera EXIF embedded</string>
+    <string name="storage_title">Storage &amp; Cleanup</string>
+
+    <!-- Collapsible Filters, Sort & Global Error Boundary -->
+    <string name="filter_filters">Filters</string>
+    <string name="filter_sort">Sort</string>
+    <string name="filter_density">Grid</string>
+    <string name="filter_all_albums">All</string>
+    <string name="filter_pinned">Pinned</string>
+    <string name="filter_non_empty">Non-empty</string>
+    <string name="filter_hidden_files">Show hidden</string>
+    <string name="filter_ascending">Ascending</string>
+    <string name="filter_descending">Newest first</string>
+    <string name="sort_taken">Date taken</string>
+    <string name="sort_added">Date added</string>
+    <string name="sort_modified">Modified</string>
+    <string name="sort_name">Name</string>
+    <string name="sort_size">Size</string>
+    <string name="error_boundary_title">This view hit a problem</string>
+    <string name="error_boundary_body">Your photos and files are safe. Recover cleanly or go back.</string>
+    <string name="error_boundary_reset">Recover view</string>
+    <string name="error_boundary_back">Go back</string>
 </resources>

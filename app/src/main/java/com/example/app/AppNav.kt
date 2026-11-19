@@ -18,17 +18,21 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -59,26 +63,39 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.paging.compose.collectAsLazyPagingItems
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.platform.testTag
 import com.example.Access
 import com.example.AppViewModel
 import com.example.CameraHost
 import com.example.Permissions
 import com.example.R
 import com.example.core.common.FarResult
+import com.example.core.common.LocalDiagnostics
+import com.example.core.common.safeParseMediaUri
+import com.example.core.common.userTitle
 import com.example.core.database.EditRecipe
 import com.example.core.database.FarDatabase
+import com.example.core.media.BatchMediaOps
+import com.example.core.media.ExifScrubber
 import com.example.core.media.GalleryViewModel
 import com.example.core.media.MediaFilter
 import com.example.core.media.MediaKind
 import com.example.core.media.MediaRepository
+import com.example.core.media.MediaRow
 import com.example.core.media.OcrIndexer
+import com.example.core.media.SortKey
+import com.example.feature.albums.AlbumSort
 import com.example.feature.albums.AlbumUi
 import com.example.feature.albums.AlbumsScreen
+import com.example.feature.albums.DateRangeFilter
 import com.example.feature.albums.IndexStatus
 import com.example.feature.albums.MemoryRules
 import com.example.feature.albums.MemoryUi
 import com.example.feature.albums.SearchScope
 import com.example.feature.albums.SearchScreen
+import com.example.feature.albums.SizeFilter
 import com.example.feature.albums.SystemCollection
 import com.example.feature.camera.CameraViewModel
 import com.example.feature.duplicates.DupGroup
@@ -87,17 +104,25 @@ import com.example.feature.duplicates.DuplicateFinder
 import com.example.feature.duplicates.DuplicatesScreen
 import com.example.feature.editor.EditorEngine
 import com.example.feature.editor.EditorScreen
+import com.example.feature.editor.EditState
 import com.example.feature.gallery.GalleryItem
 import com.example.feature.gallery.GalleryScreen
 import com.example.feature.onboarding.OnboardingScreen
 import com.example.feature.settings.SettingsScreen
+import com.example.feature.storage.StorageAnalyzerScreen
+import com.example.feature.storage.TrashManagerScreen
 import com.example.feature.video.FrameGrabber
 import com.example.feature.video.TrimPanel
 import com.example.feature.video.VideoPlayer
 import com.example.feature.video.VideoTrimmer
+import com.example.feature.viewer.CompareScreen
 import com.example.feature.viewer.ViewerItem
 import com.example.feature.viewer.ViewerScreen
+import com.example.ui.components.RecoveryBanner
+import com.example.ui.feedback.FarErrorBoundary
 import com.example.ui.feedback.GlassToast
+import com.example.ui.feedback.OperationProgressSheet
+import com.example.ui.feedback.OperationUi
 import com.example.ui.glass.GlassKind
 import com.example.ui.glass.glass
 import com.example.ui.glass.rememberGlass
@@ -105,8 +130,13 @@ import com.example.ui.nav.FarTab
 import com.example.ui.nav.GlassBottomBar
 import com.example.ui.nav.GlassNavRail
 import com.example.ui.theme.FarPalette
+import com.example.ui.theme.FarSpacing
 import com.example.ui.theme.FarTheme
+import com.example.ui.theme.LocalSemanticColors
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import java.time.LocalDate
+import java.time.ZoneId
 
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
@@ -140,7 +170,11 @@ fun FarApp(vm: AppViewModel, activity: Activity, startOnFiles: Boolean) {
         hapticsEnabled = s.haptics,
     ) {
         val nav = rememberNavController()
-        val glass = rememberGlass()
+        val photosGlass = rememberGlass()
+        val albumsGlass = rememberGlass()
+        val searchGlass = rememberGlass()
+        val filesGlass = rememberGlass()
+        val subGlass = rememberGlass()
         val scope = rememberCoroutineScope()
         val db = remember { FarDatabase.get(ctx) }
         val repo = remember { MediaRepository(ctx.contentResolver) }
@@ -150,6 +184,8 @@ fun FarApp(vm: AppViewModel, activity: Activity, startOnFiles: Boolean) {
         val selection by gvm.selection.collectAsState()
         val zoom by gvm.zoom.collectAsState()
         val filter by gvm.filter.collectAsState()
+        val gallerySort by gvm.sort.collectAsState()
+        val galleryDesc by gvm.descending.collectAsState()
         val favorites by gvm.favoriteIds.collectAsState()
         val albums by gvm.albums.collectAsState()
         val albumRefs by gvm.albumRefs.collectAsState()
@@ -165,14 +201,28 @@ fun FarApp(vm: AppViewModel, activity: Activity, startOnFiles: Boolean) {
         var toast by remember { mutableStateOf<String?>(null) }
         var favoritesFilter by rememberSaveable { mutableStateOf(false) }
         var albumPickerTargets by remember { mutableStateOf<List<Long>?>(null) }
+        var coverPickerAlbum by remember { mutableStateOf<AlbumUi?>(null) }
 
         var searchQuery by rememberSaveable { mutableStateOf("") }
         var searchScope by remember { mutableStateOf(SearchScope.All) }
+        var dateRange by remember { mutableStateOf(DateRangeFilter.Any) }
+        var sizeFilter by remember { mutableStateOf(SizeFilter.Any) }
         var ocrPercent by remember { mutableStateOf<Int?>(null) }
 
         var trimTarget by remember { mutableStateOf<Pair<Uri, Long>?>(null) }
         var trimBusy by remember { mutableStateOf(false) }
         var trimProgress by remember { mutableStateOf<Float?>(null) }
+
+        var trashedRefreshNonce by remember { mutableIntStateOf(0) }
+        var batchResizeTargets by remember { mutableStateOf<List<MediaRow>?>(null) }
+        var batchRenameTargets by remember { mutableStateOf<List<MediaRow>?>(null) }
+        var batchProgress by remember { mutableStateOf<OperationUi?>(null) }
+        var batchJob by remember { mutableStateOf<Job?>(null) }
+        var comparePickerSourceId by remember { mutableStateOf<Long?>(null) }
+
+        LaunchedEffect(libraryRows, favorites) {
+            LibraryStatsBridge.syncFromRows(ctx, libraryRows, favorites.size)
+        }
 
         val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
             vm.refreshAccess()
@@ -191,6 +241,7 @@ fun FarApp(vm: AppViewModel, activity: Activity, startOnFiles: Boolean) {
         val trashLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { res ->
             if (res.resultCode == Activity.RESULT_OK) {
                 toast = "Moved to Recently Deleted"
+                trashedRefreshNonce++
                 gvm.clearSelection()
                 gvm.refreshAll()
                 items.refresh()
@@ -201,15 +252,29 @@ fun FarApp(vm: AppViewModel, activity: Activity, startOnFiles: Boolean) {
         val restoreLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { res ->
             if (res.resultCode == Activity.RESULT_OK) {
                 toast = "Restored to library"
+                trashedRefreshNonce++
                 gvm.refreshAll()
                 items.refresh()
+            }
+        }
+        val permanentDeleteLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { res ->
+            if (res.resultCode == Activity.RESULT_OK) {
+                toast = "Permanently deleted"
+                trashedRefreshNonce++
+                gvm.refreshAll()
+                items.refresh()
+            } else {
+                toast = "Nothing was deleted"
             }
         }
 
         fun trash(uris: List<Uri>) {
             if (uris.isEmpty()) return
             runCatching { trashLauncher.launch(IntentSenderRequest.Builder(repo.trashRequest(uris, true)).build()) }
-                .onFailure { toast = "Couldn't open delete confirmation." }
+                .onFailure {
+                    LocalDiagnostics.recordEvent(ctx, "FG-TRASH", "trash_request", it.javaClass.simpleName)
+                    toast = "Couldn't open delete confirmation."
+                }
         }
 
         val pick = route as? IncomingRoute.Pick
@@ -268,7 +333,7 @@ fun FarApp(vm: AppViewModel, activity: Activity, startOnFiles: Boolean) {
         }
 
         // Update gallery filter when Search tab or Favorites filter is active
-        LaunchedEffect(tab, searchQuery, searchScope, favoritesFilter, favorites) {
+        LaunchedEffect(tab, searchQuery, searchScope, dateRange, sizeFilter, favoritesFilter, favorites) {
             when (tab) {
                 FarTab.Search -> {
                     val q = searchQuery.trim()
@@ -286,6 +351,16 @@ fun FarApp(vm: AppViewModel, activity: Activity, startOnFiles: Boolean) {
                         matchedIds != null -> matchedIds
                         else -> favIntersection
                     }
+                    val now = System.currentTimeMillis()
+                    val startOfYearMs = LocalDate.now().withDayOfYear(1)
+                        .atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                    val (minDateMs, maxDateMs) = when (dateRange) {
+                        DateRangeFilter.Any -> null to null
+                        DateRangeFilter.Last7Days -> (now - 7L * 86_400_000L) to null
+                        DateRangeFilter.Last30Days -> (now - 30L * 86_400_000L) to null
+                        DateRangeFilter.ThisYear -> startOfYearMs to null
+                        DateRangeFilter.Older -> null to (startOfYearMs - 1L)
+                    }
                     gvm.filter.value = MediaFilter(
                         kind = when (searchScope) {
                             SearchScope.Photos -> MediaKind.Photos
@@ -293,9 +368,12 @@ fun FarApp(vm: AppViewModel, activity: Activity, startOnFiles: Boolean) {
                             else -> MediaKind.All
                         },
                         pathContains = if (searchScope == SearchScope.Screenshots) "Screenshots" else null,
-                        minSizeBytes = if (searchScope == SearchScope.Large) 100L * 1024 * 1024 else null,
+                        minSizeBytes = sizeFilter.minBytes,
+                        minDateMs = minDateMs,
+                        maxDateMs = maxDateMs,
                         onlyIds = finalIds,
-                        forceEmpty = q.isNotBlank() && (finalIds == null || finalIds.isEmpty()),
+                        forceEmpty = (q.isNotBlank() && (finalIds == null || finalIds.isEmpty())) ||
+                            (searchScope == SearchScope.Favorites && favorites.isEmpty()),
                     )
                 }
                 FarTab.Photos -> {
@@ -321,6 +399,7 @@ fun FarApp(vm: AppViewModel, activity: Activity, startOnFiles: Boolean) {
                     count = mediaIds.size,
                     coverUri = coverRow?.uri?.toString(),
                     pinned = a.pinned,
+                    createdAt = a.createdAt,
                 )
             }
         }
@@ -379,211 +458,387 @@ fun FarApp(vm: AppViewModel, activity: Activity, startOnFiles: Boolean) {
                 }
 
                 composable("main") {
-                    val avs = this
-                    BoxWithConstraints(Modifier.fillMaxSize()) {
-                        val wide = maxWidth >= 600.dp
-                        Row(Modifier.fillMaxSize()) {
-                            if (wide && selection.isEmpty()) {
-                                GlassNavRail(
-                                    glass = glass,
-                                    selected = tab,
-                                    onSelect = { tab = it },
-                                    onCamera = { nav.navigate("camera") },
-                                )
+                    val semantic = LocalSemanticColors.current
+                    val activeGlass = when (tab) {
+                        FarTab.Photos -> photosGlass
+                        FarTab.Albums -> albumsGlass
+                        FarTab.Search -> searchGlass
+                        FarTab.Files -> filesGlass
+                    }
+                    val hasActiveSearch = tab == FarTab.Search && (
+                        searchQuery.isNotBlank() ||
+                            searchScope != SearchScope.All ||
+                            dateRange != DateRangeFilter.Any ||
+                            sizeFilter != SizeFilter.Any
+                        )
+                    BackHandler(
+                        enabled = selection.isNotEmpty() || hasActiveSearch || (tab == FarTab.Photos && favoritesFilter),
+                    ) {
+                        when {
+                            selection.isNotEmpty() -> gvm.clearSelection()
+                            hasActiveSearch -> {
+                                searchQuery = ""
+                                searchScope = SearchScope.All
+                                dateRange = DateRangeFilter.Any
+                                sizeFilter = SizeFilter.Any
                             }
-                            Box(Modifier.weight(1f).fillMaxHeight()) {
-                                AnimatedContent(tab, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "tabs") { t ->
-                                    when (t) {
-                                        FarTab.Photos -> GalleryScreen(
-                                            items = items,
-                                            glass = glass,
-                                            zoom = zoom,
-                                            onZoomChange = { gvm.zoom.value = it },
-                                            selection = selection,
-                                            onOpen = { m ->
-                                                if (pick != null) gvm.toggleSelect(m.id) else {
-                                                    val snap = items.itemSnapshotList.items.filterIsInstance<GalleryItem.Media>()
-                                                    viewerList = snap.map { ViewerItem(it.id, it.uri, it.description, null, it.isVideo, it.isFavorite) }
-                                                    viewerIndex = snap.indexOfFirst { it.id == m.id }.coerceAtLeast(0)
-                                                    nav.navigate("viewer")
-                                                }
-                                            },
-                                            onToggleSelect = { gvm.toggleSelect(it.id) },
-                                            onRetry = { items.retry() },
-                                            onRequestAccess = {
-                                                if (access == Access.None) permLauncher.launch(Permissions.mediaPermissions())
-                                                else activity.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${ctx.packageName}")))
-                                            },
-                                            initialColumns = s.gridColumns,
-                                            access = access,
-                                            activeKind = filter.kind,
-                                            favoritesOnly = favoritesFilter,
-                                            onKindChange = { k -> gvm.setKind(k) },
-                                            onToggleFavoritesOnly = { favoritesFilter = !favoritesFilter },
-                                            onOpenSettings = { nav.navigate("settings") },
-                                            onClearSelection = { gvm.clearSelection() },
-                                            mediaTileModifier = { m -> Modifier.farShared("media_${m.id}", this@SharedTransitionLayout, avs) },
-                                        )
+                            tab == FarTab.Photos && favoritesFilter -> favoritesFilter = false
+                        }
+                    }
 
-                                        FarTab.Albums -> AlbumsScreen(
-                                            albums = albumUis,
-                                            memories = memories,
-                                            glass = glass,
-                                            onOpenAlbum = { nav.navigate("album/${it.id}") },
-                                            onOpenMemory = { nav.navigate("collection/memory_${it.id}") },
-                                            onOpenCollection = { col ->
-                                                when (col) {
-                                                    SystemCollection.Favorites -> nav.navigate("collection/favorites")
-                                                    SystemCollection.Videos -> nav.navigate("collection/videos")
-                                                    SystemCollection.Screenshots -> nav.navigate("collection/screenshots")
-                                                    SystemCollection.Camera -> nav.navigate("collection/camera")
-                                                    SystemCollection.Duplicates -> nav.navigate("duplicates")
-                                                    SystemCollection.RecentlyDeleted -> nav.navigate("collection/trash")
-                                                    SystemCollection.ExcludedFolders -> nav.navigate("excluded")
-                                                }
-                                            },
-                                            onCreateAlbum = { name -> gvm.createAlbum(name) },
-                                            onRenameAlbum = { album, name -> gvm.renameAlbum(album.id, name) },
-                                            onTogglePin = { album -> gvm.togglePinAlbum(album.id, album.pinned) },
-                                            onDeleteAlbum = { album -> gvm.deleteAlbum(album.id) },
-                                        )
-
-                                        FarTab.Search -> SearchScreen(
-                                            query = searchQuery,
-                                            onQuery = { searchQuery = it },
-                                            onSubmitQuery = { q -> gvm.addSearchHistory(q) },
-                                            scope = searchScope,
-                                            onScope = { searchScope = it },
-                                            recent = recentSearches,
-                                            onClearRecent = { gvm.clearSearchHistory() },
-                                            index = when {
-                                                !s.ocrEnabled -> IndexStatus.Disabled
-                                                ocrPercent != null -> IndexStatus.Indexing(ocrPercent!!)
-                                                access == Access.Selected -> IndexStatus.LimitedAccess
-                                                else -> IndexStatus.Ready
-                                            },
-                                            ocrCount = ocrCount,
-                                            onRunOcrScan = {
-                                                scope.launch {
-                                                    ocrPercent = 0
-                                                    val found = ocrIndexer.indexBatch(libraryRows, maxItems = 40) { done, total ->
-                                                        ocrPercent = ((done * 100f) / total.coerceAtLeast(1)).toInt()
-                                                    }
-                                                    ocrPercent = null
-                                                    toast = if (found > 0) "Indexed text in $found photo(s)" else "OCR scan finished"
-                                                }
-                                            },
-                                            resultCount = if (searchQuery.isBlank() && searchScope == SearchScope.All) null else items.itemCount,
-                                            glass = glass,
-                                            results = {
-                                                GalleryScreen(
-                                                    items = items,
-                                                    glass = glass,
-                                                    zoom = zoom,
-                                                    onZoomChange = { gvm.zoom.value = it },
-                                                    selection = selection,
-                                                    onOpen = { m ->
+                    FarErrorBoundary(
+                        faultCode = null,
+                        onRecover = {
+                            gvm.refreshAll()
+                            items.refresh()
+                        },
+                    ) {
+                        BoxWithConstraints(Modifier.fillMaxSize()) {
+                            val wide = maxWidth >= 600.dp
+                            Row(Modifier.fillMaxSize()) {
+                                if (wide && selection.isEmpty()) {
+                                    GlassNavRail(
+                                        glass = activeGlass,
+                                        selected = tab,
+                                        onSelect = { tab = it },
+                                        onCamera = { nav.navigate("camera") },
+                                    )
+                                }
+                                Box(Modifier.weight(1f).fillMaxHeight()) {
+                                    AnimatedContent(tab, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "tabs") { t ->
+                                        when (t) {
+                                            FarTab.Photos -> GalleryScreen(
+                                                items = items,
+                                                glass = photosGlass,
+                                                zoom = zoom,
+                                                onZoomChange = { gvm.zoom.value = it },
+                                                selection = selection,
+                                                onOpen = { m ->
+                                                    if (pick != null) gvm.toggleSelect(m.id) else {
                                                         val snap = items.itemSnapshotList.items.filterIsInstance<GalleryItem.Media>()
-                                                        viewerList = snap.map { ViewerItem(it.id, it.uri, it.description, null, it.isVideo, it.isFavorite) }
+                                                        viewerList = snap.map {
+                                                            ViewerItem(it.id, it.uri, it.description, null, it.isVideo, it.id in favorites)
+                                                        }
                                                         viewerIndex = snap.indexOfFirst { it.id == m.id }.coerceAtLeast(0)
-                                                        if (searchQuery.isNotBlank()) gvm.addSearchHistory(searchQuery)
                                                         nav.navigate("viewer")
-                                                    },
-                                                    onToggleSelect = { gvm.toggleSelect(it.id) },
-                                                    onRetry = { items.retry() },
-                                                    onRequestAccess = { permLauncher.launch(Permissions.mediaPermissions()) },
-                                                    showTopBar = false,
-                                                )
-                                            },
-                                        )
+                                                    }
+                                                },
+                                                onToggleSelect = { gvm.toggleSelect(it.id) },
+                                                onRetry = { items.retry() },
+                                                onRequestAccess = {
+                                                    if (access == Access.None) permLauncher.launch(Permissions.mediaPermissions())
+                                                    else {
+                                                        runCatching {
+                                                            activity.startActivity(
+                                                                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${ctx.packageName}"))
+                                                            )
+                                                        }.onFailure { err ->
+                                                            LocalDiagnostics.recordEvent(ctx, "FG-SETTINGS", "app_details", err.javaClass.simpleName)
+                                                            toast = "Open Android Settings to manage photo access."
+                                                        }
+                                                    }
+                                                },
+                                                initialColumns = s.gridColumns,
+                                                access = access,
+                                                favoriteIds = favorites,
+                                                activeKind = filter.kind,
+                                                favoritesOnly = favoritesFilter,
+                                                activeSort = gallerySort,
+                                                ascending = !galleryDesc,
+                                                onKindChange = { k -> gvm.setKind(k) },
+                                                onToggleFavoritesOnly = { favoritesFilter = !favoritesFilter },
+                                                onSortChange = { gvm.setSort(it) },
+                                                onToggleSortDirection = { gvm.toggleSortDirection() },
+                                                onCycleTheme = {
+                                                    val next = s.theme.next()
+                                                    vm.update { it.copy(theme = next) }
+                                                    ThemeTileService.syncTile(ctx)
+                                                    toast = ctx.getString(R.string.theme_switched, ctx.getString(next.labelRes()))
+                                                },
+                                                onPullRefresh = {
+                                                    gvm.refreshAll()
+                                                    items.refresh()
+                                                    LibraryStatsBridge.syncFromRows(ctx, libraryRows, favorites.size)
+                                                },
+                                                onOpenSettings = { nav.navigate("settings") },
+                                                onClearSelection = { gvm.clearSelection() },
+                                            )
 
-                                        FarTab.Files -> FilesTab(glass)
+                                            FarTab.Albums -> AlbumsScreen(
+                                                albums = albumUis,
+                                                memories = memories,
+                                                albumSort = s.albumSort,
+                                                onAlbumSortChange = { sort -> vm.update { it.copy(albumSort = sort) } },
+                                                glass = albumsGlass,
+                                                onOpenAlbum = { nav.navigate("album/${it.id}") },
+                                                onOpenMemory = { nav.navigate("collection/memory_${it.id}") },
+                                                onOpenCollection = { col ->
+                                                    when (col) {
+                                                        SystemCollection.Favorites -> nav.navigate("collection/favorites")
+                                                        SystemCollection.Videos -> nav.navigate("collection/videos")
+                                                        SystemCollection.Screenshots -> nav.navigate("collection/screenshots")
+                                                        SystemCollection.Camera -> nav.navigate("collection/camera")
+                                                        SystemCollection.StorageCleanup -> nav.navigate("storage")
+                                                        SystemCollection.Duplicates -> nav.navigate("duplicates")
+                                                        SystemCollection.RecentlyDeleted -> nav.navigate("collection/trash")
+                                                        SystemCollection.ExcludedFolders -> nav.navigate("excluded")
+                                                    }
+                                                },
+                                                onCreateAlbum = { name -> gvm.createAlbum(name) },
+                                                onRenameAlbum = { album, name -> gvm.renameAlbum(album.id, name) },
+                                                onTogglePin = { album -> gvm.togglePinAlbum(album.id, album.pinned) },
+                                                onPickCover = { album -> coverPickerAlbum = album },
+                                                onDeleteAlbum = { album -> gvm.deleteAlbum(album.id) },
+                                            )
+
+                                            FarTab.Search -> SearchScreen(
+                                                query = searchQuery,
+                                                onQuery = { searchQuery = it },
+                                                onSubmitQuery = { q -> gvm.addSearchHistory(q) },
+                                                scope = searchScope,
+                                                onScope = { searchScope = it },
+                                                dateRange = dateRange,
+                                                onDateRange = { dateRange = it },
+                                                sizeFilter = sizeFilter,
+                                                onSizeFilter = { sizeFilter = it },
+                                                recent = recentSearches,
+                                                onClearRecent = { gvm.clearSearchHistory() },
+                                                index = when {
+                                                    !s.ocrEnabled -> IndexStatus.Disabled
+                                                    ocrPercent != null -> IndexStatus.Indexing(ocrPercent!!)
+                                                    access == Access.Selected -> IndexStatus.LimitedAccess
+                                                    else -> IndexStatus.Ready
+                                                },
+                                                ocrCount = ocrCount,
+                                                onRunOcrScan = {
+                                                    scope.launch {
+                                                        ocrPercent = 0
+                                                        val found = ocrIndexer.indexBatch(libraryRows, maxItems = 40) { done, total ->
+                                                            ocrPercent = ((done * 100f) / total.coerceAtLeast(1)).toInt()
+                                                        }
+                                                        ocrPercent = null
+                                                        toast = if (found > 0) "Indexed text in $found photo(s)" else "OCR scan finished"
+                                                    }
+                                                },
+                                                resultCount = if (
+                                                    searchQuery.isBlank() &&
+                                                    searchScope == SearchScope.All &&
+                                                    dateRange == DateRangeFilter.Any &&
+                                                    sizeFilter == SizeFilter.Any
+                                                ) null else items.itemCount,
+                                                glass = searchGlass,
+                                                results = {
+                                                    GalleryScreen(
+                                                        items = items,
+                                                        glass = searchGlass,
+                                                        zoom = zoom,
+                                                        onZoomChange = { gvm.zoom.value = it },
+                                                        selection = selection,
+                                                        onOpen = { m ->
+                                                            val snap = items.itemSnapshotList.items.filterIsInstance<GalleryItem.Media>()
+                                                            viewerList = snap.map {
+                                                                ViewerItem(it.id, it.uri, it.description, null, it.isVideo, it.id in favorites)
+                                                            }
+                                                            viewerIndex = snap.indexOfFirst { it.id == m.id }.coerceAtLeast(0)
+                                                            if (searchQuery.isNotBlank()) gvm.addSearchHistory(searchQuery)
+                                                            nav.navigate("viewer")
+                                                        },
+                                                        onToggleSelect = { gvm.toggleSelect(it.id) },
+                                                        onRetry = { items.retry() },
+                                                        onRequestAccess = { permLauncher.launch(Permissions.mediaPermissions()) },
+                                                        showTopBar = false,
+                                                        favoriteIds = favorites,
+                                                    )
+                                                },
+                                            )
+
+                                            FarTab.Files -> FilesTab(filesGlass)
+                                        }
                                     }
-                                }
 
-                                if (!wide) {
-                                    Box(Modifier.align(Alignment.BottomCenter)) {
-                                        GlassBottomBar(
-                                            glass = glass,
-                                            selected = tab,
-                                            onSelect = { tab = it },
-                                            onCamera = { nav.navigate("camera") },
-                                            visible = selection.isEmpty(),
-                                        )
+                                    if (!wide) {
+                                        Box(Modifier.align(Alignment.BottomCenter)) {
+                                            GlassBottomBar(
+                                                glass = activeGlass,
+                                                selected = tab,
+                                                onSelect = { tab = it },
+                                                onCamera = { nav.navigate("camera") },
+                                                visible = selection.isEmpty(),
+                                            )
+                                        }
                                     }
-                                }
 
-                                if (selection.isNotEmpty()) {
-                                    Row(
-                                        Modifier
-                                            .align(Alignment.BottomCenter)
-                                            .navigationBarsPadding()
-                                            .padding(16.dp)
-                                            .glass(glass, RoundedCornerShape(28.dp), GlassKind.Bar)
-                                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                    ) {
-                                        Text("${selection.size}", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 8.dp))
+                                    if (selection.isNotEmpty()) {
+                                        Row(
+                                            Modifier
+                                                .align(Alignment.BottomCenter)
+                                                .navigationBarsPadding()
+                                                .padding(horizontal = FarSpacing.screenPadding, vertical = 12.dp)
+                                                .glass(activeGlass, RoundedCornerShape(28.dp), GlassKind.Bar)
+                                                .border(0.75.dp, semantic.cardBorder, RoundedCornerShape(28.dp))
+                                                .horizontalScroll(rememberScrollState())
+                                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            Text(
+                                                "${selection.size}",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                modifier = Modifier.padding(horizontal = 8.dp),
+                                            )
                                         if (pick != null) {
-                                            TextButton(onClick = {
-                                                val uris = items.itemSnapshotList.items
-                                                    .filterIsInstance<GalleryItem.Media>()
-                                                    .filter { it.id in selection }
-                                                    .map { Uri.parse(it.uri) }
-                                                IntentResults.pick(activity, uris.take(pick.maxItems))
-                                            }) { Text("Return ${selection.size}") }
-                                        } else {
-                                            TextButton(onClick = { albumPickerTargets = selection.toList() }) { Text("Album") }
-                                            TextButton(onClick = {
-                                                val uris = ArrayList(
-                                                    items.itemSnapshotList.items
+                                            TextButton(
+                                                onClick = {
+                                                    val uris = items.itemSnapshotList.items
                                                         .filterIsInstance<GalleryItem.Media>()
                                                         .filter { it.id in selection }
-                                                        .map { Uri.parse(it.uri) }
-                                                )
-                                                if (uris.isNotEmpty()) {
-                                                    activity.startActivity(
-                                                        Intent.createChooser(
-                                                            Intent(Intent.ACTION_SEND_MULTIPLE)
-                                                                .setType("*/*")
-                                                                .putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
-                                                                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
-                                                            null,
-                                                        )
-                                                    )
+                                                        .mapNotNull { safeParseMediaUri(it.uri) }
+                                                    IntentResults.pick(activity, uris.take(pick.maxItems))
+                                                },
+                                                modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                                            ) { Text("Return ${selection.size}") }
+                                        } else {
+                                            TextButton(
+                                                onClick = {
+                                                    val allIds = items.itemSnapshotList.items
+                                                        .filterIsInstance<GalleryItem.Media>()
+                                                        .map { it.id }
+                                                        .toSet()
+                                                    gvm.setSelected(allIds)
+                                                },
+                                                modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                                            ) { Text(stringResource(R.string.batch_all)) }
+                                            val allFav = selection.all { it in favorites }
+                                            TextButton(
+                                                onClick = {
+                                                    gvm.setFavorites(selection, !allFav)
+                                                    toast = if (!allFav) "Added ${selection.size} to Favorites" else "Removed from Favorites"
+                                                },
+                                                modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                                            ) { Text(stringResource(if (allFav) R.string.batch_unfav else R.string.batch_fav)) }
+                                            TextButton(
+                                                onClick = { albumPickerTargets = selection.toList() },
+                                                modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                                            ) {
+                                                Text(stringResource(R.string.batch_album))
+                                            }
+                                            if (selection.size == 2) {
+                                                val pair = selection.toList()
+                                                if (pair.all { rowById[it] != null }) {
+                                                    TextButton(
+                                                        onClick = {
+                                                            gvm.clearSelection()
+                                                            nav.navigate("compare/${pair[0]}/${pair[1]}")
+                                                        },
+                                                        modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("batch_compare_button"),
+                                                    ) { Text(stringResource(R.string.batch_compare)) }
                                                 }
-                                            }) { Text(stringResource(R.string.action_share)) }
-                                            TextButton(onClick = {
-                                                val uris = items.itemSnapshotList.items
-                                                    .filterIsInstance<GalleryItem.Media>()
-                                                    .filter { it.id in selection }
-                                                    .map { Uri.parse(it.uri) }
-                                                trash(uris)
-                                            }) { Text(stringResource(R.string.action_delete), color = MaterialTheme.colorScheme.error) }
+                                            }
+                                            val selectedRows = selection.mapNotNull { rowById[it] }
+                                            if (selectedRows.any { !it.isVideo }) {
+                                                TextButton(
+                                                    onClick = { batchResizeTargets = selectedRows },
+                                                    modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("batch_resize_button"),
+                                                ) { Text(stringResource(R.string.batch_resize)) }
+                                            }
+                                            if (selectedRows.isNotEmpty()) {
+                                                TextButton(
+                                                    onClick = { batchRenameTargets = selectedRows },
+                                                    modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("batch_rename_button"),
+                                                ) { Text(stringResource(R.string.batch_rename)) }
+                                            }
+                                            TextButton(
+                                                onClick = {
+                                                    val rawUris = items.itemSnapshotList.items
+                                                        .filterIsInstance<GalleryItem.Media>()
+                                                        .filter { it.id in selection }
+                                                        .mapNotNull { safeParseMediaUri(it.uri) }
+                                                    if (rawUris.isNotEmpty()) {
+                                                        scope.launch {
+                                                            val shareUris = if (s.stripLocationOnShare) {
+                                                                ArrayList(ExifScrubber.createStrippedShareCopies(ctx, rawUris))
+                                                            } else {
+                                                                ArrayList(rawUris)
+                                                            }
+                                                            runCatching {
+                                                                activity.startActivity(
+                                                                    Intent.createChooser(
+                                                                        Intent(Intent.ACTION_SEND_MULTIPLE)
+                                                                            .setType("*/*")
+                                                                            .putParcelableArrayListExtra(Intent.EXTRA_STREAM, shareUris)
+                                                                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
+                                                                        null,
+                                                                    )
+                                                                )
+                                                            }.onFailure { err ->
+                                                                LocalDiagnostics.recordEvent(ctx, "FG-SHARE", "batch_share", err.javaClass.simpleName)
+                                                                toast = "No app found to share"
+                                                            }
+                                                        }
+                                                    }
+                                                },
+                                                modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                                            ) { Text(stringResource(R.string.action_share)) }
+                                            TextButton(
+                                                onClick = {
+                                                    val uris = items.itemSnapshotList.items
+                                                        .filterIsInstance<GalleryItem.Media>()
+                                                        .filter { it.id in selection }
+                                                        .mapNotNull { safeParseMediaUri(it.uri) }
+                                                    trash(uris)
+                                                },
+                                                modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                                            ) { Text(stringResource(R.string.action_delete), color = MaterialTheme.colorScheme.error) }
                                         }
                                     }
                                 }
 
-                                if (interruptedOps.isNotEmpty()) {
-                                    val firstOp = interruptedOps.first()
-                                    Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 152.dp)) {
-                                        GlassToast(
-                                            glass = glass,
-                                            message = "${firstOp.type} stopped unexpectedly (${firstOp.done}/${firstOp.total})",
-                                            actionLabel = "Dismiss",
-                                            onAction = { scope.launch { db.operations().dismiss(firstOp.id) } },
+                                val bottomOverlayClearance = when {
+                                    selection.isNotEmpty() -> 80.dp
+                                    !wide -> 84.dp
+                                    else -> 20.dp
+                                }
+                                Column(
+                                    Modifier
+                                        .align(Alignment.BottomCenter)
+                                        .navigationBarsPadding()
+                                        .padding(bottom = bottomOverlayClearance),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    batchProgress?.let { op ->
+                                        OperationProgressSheet(
+                                            glass = activeGlass,
+                                            op = op,
+                                            onCancel = {
+                                                batchJob?.cancel()
+                                                batchProgress = null
+                                                toast = "Batch operation cancelled"
+                                            },
                                         )
                                     }
-                                }
 
-                                toast?.let { t ->
-                                    Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 96.dp)) {
-                                        GlassToast(glass, t, stringResource(R.string.action_ok), onAction = { toast = null })
+                                    if (interruptedOps.isNotEmpty()) {
+                                        val firstOp = interruptedOps.first()
+                                        RecoveryBanner(
+                                            glass = activeGlass,
+                                            icon = Icons.Outlined.WarningAmber,
+                                            title = "${firstOp.type} stopped unexpectedly",
+                                            body = "${firstOp.done} of ${firstOp.total} completed before interruption.",
+                                            actionLabel = stringResource(R.string.action_dismiss),
+                                            onAction = { scope.launch { db.operations().dismiss(firstOp.id) } },
+                                            modifier = Modifier.padding(horizontal = FarSpacing.screenPadding),
+                                        )
+                                    }
+
+                                    toast?.let { t ->
+                                        GlassToast(activeGlass, t, stringResource(R.string.action_ok), onAction = { toast = null })
                                     }
                                 }
                             }
                         }
+                    }
                     }
                 }
 
@@ -593,347 +848,582 @@ fun FarApp(vm: AppViewModel, activity: Activity, startOnFiles: Boolean) {
                     val ids = remember(albumRefs, albumId) {
                         albumRefs.filter { it.albumId == albumId }.map { it.mediaId }.toSet()
                     }
-                    val avs = this
-                    val subGvm: GalleryViewModel = viewModel(
-                        key = "album_$albumId",
-                        factory = GalleryViewModel.factory(
-                            ctx.contentResolver,
-                            db,
-                            MediaFilter(onlyIds = ids, forceEmpty = ids.isEmpty()),
-                        ),
-                    )
-                    LaunchedEffect(ids) {
-                        subGvm.filter.value = MediaFilter(onlyIds = ids, forceEmpty = ids.isEmpty())
-                    }
-                    val subItems = subGvm.items.collectAsLazyPagingItems()
-                    val subSel by subGvm.selection.collectAsState()
-                    val subZoom by subGvm.zoom.collectAsState()
+                    FarErrorBoundary(
+                        faultCode = if (albumId <= 0L) "FG-INP-ALBUM" else null,
+                        onRecover = { gvm.refreshAll() },
+                        onBack = { nav.popBackStack() },
+                    ) {
+                        val subGvm: GalleryViewModel = viewModel(
+                            key = "album_$albumId",
+                            factory = GalleryViewModel.factory(
+                                ctx.contentResolver,
+                                db,
+                                MediaFilter(onlyIds = ids, forceEmpty = ids.isEmpty()),
+                            ),
+                        )
+                        LaunchedEffect(ids) {
+                            subGvm.filter.value = MediaFilter(onlyIds = ids, forceEmpty = ids.isEmpty())
+                        }
+                        val subItems = subGvm.items.collectAsLazyPagingItems()
+                        val subSel by subGvm.selection.collectAsState()
+                        val subZoom by subGvm.zoom.collectAsState()
+                        val subSort by subGvm.sort.collectAsState()
+                        val subDesc by subGvm.descending.collectAsState()
 
-                    BackHandler { nav.popBackStack() }
-                    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-                        SubCollectionHeader(
-                            title = album?.name ?: stringResource(R.string.albums_title),
-                            subtitle = "${ids.size} items",
-                            onBack = { nav.popBackStack() },
-                        )
-                        GalleryScreen(
-                            items = subItems,
-                            glass = glass,
-                            zoom = subZoom,
-                            onZoomChange = { subGvm.zoom.value = it },
-                            selection = subSel,
-                            onOpen = { m ->
-                                val snap = subItems.itemSnapshotList.items.filterIsInstance<GalleryItem.Media>()
-                                viewerList = snap.map { ViewerItem(it.id, it.uri, it.description, null, it.isVideo, it.isFavorite) }
-                                viewerIndex = snap.indexOfFirst { it.id == m.id }.coerceAtLeast(0)
-                                nav.navigate("viewer")
-                            },
-                            onToggleSelect = { subGvm.toggleSelect(it.id) },
-                            onRetry = { subItems.retry() },
-                            onRequestAccess = { permLauncher.launch(Permissions.mediaPermissions()) },
-                            showTopBar = false,
-                            modifier = Modifier.weight(1f),
-                            mediaTileModifier = { m -> Modifier.farShared("media_${m.id}", this@SharedTransitionLayout, avs) },
-                        )
+                        BackHandler { nav.popBackStack() }
+                        Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                            SubCollectionHeader(
+                                title = album?.name ?: stringResource(R.string.albums_title),
+                                subtitle = "${ids.size} items",
+                                onBack = { nav.popBackStack() },
+                                secondaryActionLabel = if (ids.isNotEmpty() && album != null) "Cover" else null,
+                                onSecondaryAction = if (ids.isNotEmpty() && album != null) {
+                                    {
+                                        coverPickerAlbum = AlbumUi(album.id, album.name, ids.size, null, album.pinned, album.createdAt)
+                                    }
+                                } else null,
+                            )
+                            GalleryScreen(
+                                items = subItems,
+                                glass = subGlass,
+                                zoom = subZoom,
+                                onZoomChange = { subGvm.zoom.value = it },
+                                selection = subSel,
+                                onOpen = { m ->
+                                    val snap = subItems.itemSnapshotList.items.filterIsInstance<GalleryItem.Media>()
+                                    viewerList = snap.map { ViewerItem(it.id, it.uri, it.description, null, it.isVideo, it.id in favorites) }
+                                    viewerIndex = snap.indexOfFirst { it.id == m.id }.coerceAtLeast(0)
+                                    nav.navigate("viewer")
+                                },
+                                onToggleSelect = { subGvm.toggleSelect(it.id) },
+                                onRetry = { subItems.retry() },
+                                onRequestAccess = { permLauncher.launch(Permissions.mediaPermissions()) },
+                                showTopBar = false,
+                                favoriteIds = favorites,
+                                activeSort = subSort,
+                                ascending = !subDesc,
+                                onSortChange = { subGvm.setSort(it) },
+                                onToggleSortDirection = { subGvm.toggleSortDirection() },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
                     }
                 }
 
                 composable("collection/{kind}") { entry ->
                     val kind = entry.arguments?.getString("kind").orEmpty()
-                    val mem = if (kind.startsWith("memory_")) memories.firstOrNull { it.id == kind.removePrefix("memory_") } else null
-                    val colFilter = when (kind) {
-                        "favorites" -> MediaFilter(onlyIds = favorites, forceEmpty = favorites.isEmpty())
-                        "videos" -> MediaFilter(kind = MediaKind.Videos)
-                        "screenshots" -> MediaFilter(pathContains = "Screenshots")
-                        "camera" -> MediaFilter(pathContains = "DCIM/Camera")
-                        "trash" -> MediaFilter(trashedOnly = true)
-                        else -> if (mem != null) MediaFilter(onlyIds = mem.mediaIds, forceEmpty = mem.mediaIds.isEmpty()) else MediaFilter()
-                    }
-                    val subGvm: GalleryViewModel = viewModel(
-                        key = "col_$kind",
-                        factory = GalleryViewModel.factory(ctx.contentResolver, db, colFilter),
-                    )
-                    LaunchedEffect(colFilter) { subGvm.filter.value = colFilter }
-                    val subItems = subGvm.items.collectAsLazyPagingItems()
-                    val subSel by subGvm.selection.collectAsState()
-                    val subZoom by subGvm.zoom.collectAsState()
-                    val title = when (kind) {
-                        "favorites" -> stringResource(R.string.collection_favorites)
-                        "videos" -> stringResource(R.string.collection_videos)
-                        "screenshots" -> stringResource(R.string.collection_screenshots)
-                        "camera" -> stringResource(R.string.collection_camera)
-                        "trash" -> stringResource(R.string.collection_trash)
-                        else -> mem?.title ?: stringResource(R.string.collections_title)
-                    }
-
-                    BackHandler { nav.popBackStack() }
-                    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-                        SubCollectionHeader(
-                            title = title,
-                            subtitle = mem?.subtitle,
-                            onBack = { nav.popBackStack() },
-                            actionLabel = if (kind == "trash" && subSel.isNotEmpty()) "Restore" else null,
-                            onAction = if (kind == "trash" && subSel.isNotEmpty()) {
-                                {
-                                    val uris = subItems.itemSnapshotList.items
-                                        .filterIsInstance<GalleryItem.Media>()
-                                        .filter { it.id in subSel }
-                                        .map { Uri.parse(it.uri) }
-                                    if (uris.isNotEmpty()) {
+                    FarErrorBoundary(
+                        faultCode = if (kind.isBlank()) "FG-INP-COL" else null,
+                        onRecover = {
+                            gvm.refreshAll()
+                            trashedRefreshNonce++
+                        },
+                        onBack = { nav.popBackStack() },
+                    ) {
+                        if (kind == "trash") {
+                            var trashedRows by remember { mutableStateOf<List<MediaRow>>(emptyList()) }
+                            var trashLoading by remember { mutableStateOf(true) }
+                            LaunchedEffect(trashedRefreshNonce) {
+                                trashLoading = true
+                                val res = repo.queryAll(MediaFilter(trashedOnly = true), SortKey.Modified, descending = true)
+                                trashedRows = (res as? FarResult.Ok)?.value ?: emptyList()
+                                trashLoading = false
+                            }
+                            TrashManagerScreen(
+                                rows = trashedRows,
+                                loading = trashLoading,
+                                onOpen = { row ->
+                                    viewerList = listOf(
+                                        ViewerItem(row.id, row.uri.toString(), row.name, null, row.isVideo, row.id in favorites)
+                                    )
+                                    viewerIndex = 0
+                                    nav.navigate("viewer")
+                                },
+                                onRestore = { uris ->
+                                    runCatching {
                                         restoreLauncher.launch(IntentSenderRequest.Builder(repo.trashRequest(uris, false)).build())
+                                    }.onFailure {
+                                        LocalDiagnostics.recordEvent(ctx, "FG-RESTORE", "trash_restore", it.javaClass.simpleName)
+                                        toast = "Couldn't open restore confirmation."
                                     }
-                                }
-                            } else null,
-                        )
-                        GalleryScreen(
-                            items = subItems,
-                            glass = glass,
-                            zoom = subZoom,
-                            onZoomChange = { subGvm.zoom.value = it },
-                            selection = subSel,
-                            onOpen = { m ->
-                                val snap = subItems.itemSnapshotList.items.filterIsInstance<GalleryItem.Media>()
-                                viewerList = snap.map { ViewerItem(it.id, it.uri, it.description, null, it.isVideo, it.isFavorite) }
-                                viewerIndex = snap.indexOfFirst { it.id == m.id }.coerceAtLeast(0)
-                                nav.navigate("viewer")
+                                },
+                                onPermanentDelete = { uris ->
+                                    runCatching {
+                                        permanentDeleteLauncher.launch(IntentSenderRequest.Builder(repo.deleteRequest(uris)).build())
+                                    }.onFailure {
+                                        LocalDiagnostics.recordEvent(ctx, "FG-DEL-PERM", "trash_empty", it.javaClass.simpleName)
+                                        toast = "Couldn't open delete confirmation."
+                                    }
+                                },
+                                onBack = { nav.popBackStack() },
+                            )
+                        } else {
+                            val mem = if (kind.startsWith("memory_")) memories.firstOrNull { it.id == kind.removePrefix("memory_") } else null
+                            val colFilter = when (kind) {
+                                "favorites" -> MediaFilter(onlyIds = favorites, forceEmpty = favorites.isEmpty())
+                                "videos" -> MediaFilter(kind = MediaKind.Videos)
+                                "screenshots" -> MediaFilter(pathContains = "Screenshots")
+                                "camera" -> MediaFilter(pathContains = "DCIM/Camera")
+                                else -> if (mem != null) MediaFilter(onlyIds = mem.mediaIds, forceEmpty = mem.mediaIds.isEmpty()) else MediaFilter()
+                            }
+                            val subGvm: GalleryViewModel = viewModel(
+                                key = "col_$kind",
+                                factory = GalleryViewModel.factory(ctx.contentResolver, db, colFilter),
+                            )
+                            LaunchedEffect(colFilter) { subGvm.filter.value = colFilter }
+                            val subItems = subGvm.items.collectAsLazyPagingItems()
+                            val subSel by subGvm.selection.collectAsState()
+                            val subZoom by subGvm.zoom.collectAsState()
+                            val subSort by subGvm.sort.collectAsState()
+                            val subDesc by subGvm.descending.collectAsState()
+                            val title = when (kind) {
+                                "favorites" -> stringResource(R.string.collection_favorites)
+                                "videos" -> stringResource(R.string.collection_videos)
+                                "screenshots" -> stringResource(R.string.collection_screenshots)
+                                "camera" -> stringResource(R.string.collection_camera)
+                                else -> mem?.title ?: stringResource(R.string.collections_title)
+                            }
+
+                            BackHandler { nav.popBackStack() }
+                            Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                                SubCollectionHeader(
+                                    title = title,
+                                    subtitle = mem?.subtitle,
+                                    onBack = { nav.popBackStack() },
+                                )
+                                GalleryScreen(
+                                    items = subItems,
+                                    glass = subGlass,
+                                    zoom = subZoom,
+                                    onZoomChange = { subGvm.zoom.value = it },
+                                    selection = subSel,
+                                    onOpen = { m ->
+                                        val snap = subItems.itemSnapshotList.items.filterIsInstance<GalleryItem.Media>()
+                                        viewerList = snap.map { ViewerItem(it.id, it.uri, it.description, null, it.isVideo, it.id in favorites) }
+                                        viewerIndex = snap.indexOfFirst { it.id == m.id }.coerceAtLeast(0)
+                                        nav.navigate("viewer")
+                                    },
+                                    onToggleSelect = { subGvm.toggleSelect(it.id) },
+                                    onRetry = { subItems.retry() },
+                                    onRequestAccess = { permLauncher.launch(Permissions.mediaPermissions()) },
+                                    showTopBar = false,
+                                    favoriteIds = favorites,
+                                    activeSort = subSort,
+                                    ascending = !subDesc,
+                                    onSortChange = { subGvm.setSort(it) },
+                                    onToggleSortDirection = { subGvm.toggleSortDirection() },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                        }
+                    }
+                }
+
+                composable("compare/{leftId}/{rightId}") { entry ->
+                    val leftId = entry.arguments?.getString("leftId")?.toLongOrNull() ?: 0L
+                    val rightId = entry.arguments?.getString("rightId")?.toLongOrNull() ?: 0L
+                    FarErrorBoundary(
+                        faultCode = if (leftId <= 0L || rightId <= 0L) "FG-INP-CMP" else null,
+                        onRecover = { gvm.refreshAll() },
+                        onBack = { nav.popBackStack() },
+                    ) {
+                        CompareScreen(
+                            left = rowById[leftId],
+                            right = rowById[rightId],
+                            glass = subGlass,
+                            onTrash = { row ->
+                                trash(listOf(row.uri))
+                                nav.popBackStack()
                             },
-                            onToggleSelect = { subGvm.toggleSelect(it.id) },
-                            onRetry = { subItems.retry() },
-                            onRequestAccess = { permLauncher.launch(Permissions.mediaPermissions()) },
-                            showTopBar = false,
-                            modifier = Modifier.weight(1f),
+                            onBack = { nav.popBackStack() },
                         )
                     }
                 }
 
                 composable("duplicates") {
                     BackHandler { nav.popBackStack() }
-                    var scanning by remember { mutableStateOf<DupScan.Progress?>(DupScan.Progress(0, 0)) }
-                    var groups by remember { mutableStateOf<List<DupGroup>>(emptyList()) }
-                    val inAlbumIds = remember(albumRefs) { albumRefs.map { it.mediaId }.toSet() }
-                    LaunchedEffect(libraryRows, favorites, inAlbumIds) {
-                        DuplicateFinder(ctx.contentResolver).scan(libraryRows, favorites, inAlbumIds).collect { ev ->
-                            when (ev) {
-                                is DupScan.Progress -> scanning = ev
-                                is DupScan.Done -> {
-                                    scanning = null
-                                    groups = ev.groups
+                    FarErrorBoundary(
+                        faultCode = null,
+                        onRecover = { gvm.refreshAll() },
+                        onBack = { nav.popBackStack() },
+                    ) {
+                        var scanning by remember { mutableStateOf<DupScan.Progress?>(DupScan.Progress(0, 0)) }
+                        var groups by remember { mutableStateOf<List<DupGroup>>(emptyList()) }
+                        val inAlbumIds = remember(albumRefs) { albumRefs.map { it.mediaId }.toSet() }
+                        LaunchedEffect(libraryRows, favorites, inAlbumIds) {
+                            DuplicateFinder(ctx.contentResolver).scan(libraryRows, favorites, inAlbumIds).collect { ev ->
+                                when (ev) {
+                                    is DupScan.Progress -> scanning = ev
+                                    is DupScan.Done -> {
+                                        scanning = null
+                                        groups = ev.groups
+                                    }
                                 }
                             }
                         }
+                        DuplicatesScreen(
+                            scanning = scanning,
+                            groups = groups,
+                            onBack = { nav.popBackStack() },
+                            onTrash = { trash(it) },
+                        )
                     }
-                    DuplicatesScreen(
-                        scanning = scanning,
-                        groups = groups,
-                        onBack = { nav.popBackStack() },
-                        onTrash = { trash(it) },
-                    )
                 }
 
                 composable("excluded") {
-                    val folders = remember(libraryRows) {
-                        libraryRows.mapNotNull { it.relativePath?.trimEnd('/') }.distinct().sorted()
-                    }
-                    ExcludedFoldersScreen(
-                        allFolders = folders,
-                        excluded = excludedFolders.toSet(),
-                        onToggleExclude = { path, ex ->
-                            if (ex) gvm.excludeFolder(path) else gvm.includeFolder(path)
-                        },
+                    FarErrorBoundary(
+                        faultCode = null,
+                        onRecover = { gvm.refreshAll() },
                         onBack = { nav.popBackStack() },
-                    )
+                    ) {
+                        val folders = remember(libraryRows) {
+                            libraryRows.mapNotNull { it.relativePath?.trimEnd('/') }.distinct().sorted()
+                        }
+                        ExcludedFoldersScreen(
+                            allFolders = folders,
+                            excluded = excludedFolders.toSet(),
+                            onToggleExclude = { path, ex ->
+                                if (ex) gvm.excludeFolder(path) else gvm.includeFolder(path)
+                            },
+                            onBack = { nav.popBackStack() },
+                        )
+                    }
                 }
 
                 composable("viewer") {
-                    val avs = this
-                    val liveList = remember(viewerList, favorites) {
-                        viewerList.map { it.copy(isFavorite = it.id in favorites) }
-                    }
-                    ViewerScreen(
-                        items = liveList,
-                        startIndex = viewerIndex,
-                        glass = glass,
-                        onClose = { nav.popBackStack() },
-                        onFavorite = { item -> if (item.id > 0) gvm.toggleFavorite(item.id) },
-                        onShare = { item ->
-                            activity.startActivity(
-                                Intent.createChooser(
-                                    Intent(Intent.ACTION_SEND)
-                                        .setType(if (item.isVideo) "video/*" else "image/*")
-                                        .putExtra(Intent.EXTRA_STREAM, Uri.parse(item.uri))
-                                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
-                                    null,
-                                )
-                            )
-                        },
-                        onEdit = { nav.navigate("editor/${Uri.encode(it.uri)}?mediaId=${it.id}") },
-                        onDelete = { trash(listOf(Uri.parse(it.uri))) },
-                        onAddToAlbum = { item -> if (item.id > 0) albumPickerTargets = listOf(item.id) },
-                        detailsContent = { item ->
-                            val tags by db.tags().tagsForMedia(item.id).collectAsState(initial = emptyList())
-                            var ocrText by remember(item.id) { mutableStateOf<String?>(null) }
-                            var ocrBusy by remember(item.id) { mutableStateOf(false) }
-                            LaunchedEffect(item.id) {
-                                if (item.id > 0) ocrText = db.ocr().get(item.id)?.extractedText
-                            }
-                            MediaDetailsSheetContent(
-                                item = item,
-                                row = rowById[item.id],
-                                tags = tags,
-                                ocrText = ocrText,
-                                ocrLoading = ocrBusy,
-                                onAddTag = { tagName -> if (item.id > 0) gvm.addTag(item.id, tagName) },
-                                onRemoveTag = { tagId -> if (item.id > 0) gvm.removeTag(item.id, tagId) },
-                                onScanOcr = {
-                                    scope.launch {
-                                        ocrBusy = true
-                                        val res = ocrIndexer.extractAndIndex(item.id, Uri.parse(item.uri))
-                                        ocrText = (res as? FarResult.Ok)?.value ?: ""
-                                        ocrBusy = false
+                    FarErrorBoundary(
+                        faultCode = null,
+                        onRecover = { gvm.refreshAll() },
+                        onBack = { nav.popBackStack() },
+                    ) {
+                        val liveList = remember(viewerList, favorites) {
+                            viewerList.map { it.copy(isFavorite = it.id in favorites) }
+                        }
+                        ViewerScreen(
+                            items = liveList,
+                            startIndex = viewerIndex,
+                            glass = subGlass,
+                            onClose = { nav.popBackStack() },
+                            onFavorite = { item -> if (item.id > 0) gvm.toggleFavorite(item.id) },
+                            onShare = { item ->
+                                val raw = safeParseMediaUri(item.uri) ?: return@ViewerScreen
+                                scope.launch {
+                                    val outUri = if (s.stripLocationOnShare && !item.isVideo) {
+                                        ExifScrubber.createStrippedShareCopies(ctx, listOf(raw)).firstOrNull() ?: raw
+                                    } else {
+                                        raw
                                     }
-                                },
-                            )
-                        },
-                        videoContent = { item ->
-                            VideoPlayer(
-                                uri = item.uri,
-                                glass = glass,
-                                resumeMs = null,
-                                onPosition = {},
-                                onFrameGrab = { ms ->
-                                    scope.launch {
-                                        when (FrameGrabber.grab(ctx, Uri.parse(item.uri), ms)) {
-                                            is FarResult.Ok -> toast = "Saved frame to Pictures/Far Gallery"
-                                            is FarResult.Err -> toast = "Couldn't capture frame"
-                                        }
+                                    runCatching {
+                                        activity.startActivity(
+                                            Intent.createChooser(
+                                                Intent(Intent.ACTION_SEND)
+                                                    .setType(if (item.isVideo) "video/*" else "image/*")
+                                                    .putExtra(Intent.EXTRA_STREAM, outUri)
+                                                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
+                                                null,
+                                            )
+                                        )
+                                    }.onFailure { err ->
+                                        LocalDiagnostics.recordEvent(ctx, "FG-SHARE", "viewer_share", err.javaClass.simpleName)
+                                        toast = "No app found to share"
                                     }
-                                },
-                                onTrim = { dur -> trimTarget = Uri.parse(item.uri) to dur },
-                                onOpenWith = {
+                                }
+                            },
+                            onEdit = { nav.navigate("editor/${Uri.encode(it.uri)}?mediaId=${it.id}") },
+                            onDelete = { safeParseMediaUri(it.uri)?.let { uri -> trash(listOf(uri)) } },
+                            onAddToAlbum = { item -> if (item.id > 0) albumPickerTargets = listOf(item.id) },
+                            onCompare = { item -> comparePickerSourceId = item.id },
+                            onOpenWith = { item ->
+                                val uri = safeParseMediaUri(item.uri) ?: return@ViewerScreen
+                                runCatching {
                                     activity.startActivity(
                                         Intent.createChooser(
                                             Intent(Intent.ACTION_VIEW)
-                                                .setDataAndType(Uri.parse(item.uri), "video/*")
+                                                .setDataAndType(uri, if (item.isVideo) "video/*" else "image/*")
                                                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
                                             null,
                                         )
                                     )
-                                },
-                            )
-                        },
-                        imageModifier = { it2 -> Modifier.farShared("media_${it2.id}", this@SharedTransitionLayout, avs) },
-                    )
+                                }.onFailure { err ->
+                                    LocalDiagnostics.recordEvent(ctx, "FG-OPEN", "viewer_open_with", err.javaClass.simpleName)
+                                    toast = "No app found to open this item"
+                                }
+                            },
+                            detailsContent = { item ->
+                                val tags by db.tags().tagsForMedia(item.id).collectAsState(initial = emptyList())
+                                var ocrText by remember(item.id) { mutableStateOf<String?>(null) }
+                                var ocrBusy by remember(item.id) { mutableStateOf(false) }
+                                LaunchedEffect(item.id) {
+                                    if (item.id > 0) ocrText = db.ocr().get(item.id)?.extractedText
+                                }
+                                MediaDetailsSheetContent(
+                                    item = item,
+                                    row = rowById[item.id],
+                                    tags = tags,
+                                    ocrText = ocrText,
+                                    ocrLoading = ocrBusy,
+                                    onAddTag = { tagName -> if (item.id > 0) gvm.addTag(item.id, tagName) },
+                                    onRemoveTag = { tagId -> if (item.id > 0) gvm.removeTag(item.id, tagId) },
+                                    onScanOcr = {
+                                        val uri = safeParseMediaUri(item.uri) ?: return@MediaDetailsSheetContent
+                                        scope.launch {
+                                            ocrBusy = true
+                                            val res = ocrIndexer.extractAndIndex(item.id, uri)
+                                            ocrText = (res as? FarResult.Ok)?.value ?: ""
+                                            ocrBusy = false
+                                        }
+                                    },
+                                    onShareClean = {
+                                        val uri = safeParseMediaUri(item.uri) ?: return@MediaDetailsSheetContent
+                                        scope.launch {
+                                            val clean = ExifScrubber.createStrippedShareCopies(ctx, listOf(uri)).firstOrNull() ?: uri
+                                            runCatching {
+                                                activity.startActivity(
+                                                    Intent.createChooser(
+                                                        Intent(Intent.ACTION_SEND)
+                                                            .setType("image/*")
+                                                            .putExtra(Intent.EXTRA_STREAM, clean)
+                                                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
+                                                        null,
+                                                    )
+                                                )
+                                            }.onFailure { err ->
+                                                LocalDiagnostics.recordEvent(ctx, "FG-SHARE", "viewer_share_clean", err.javaClass.simpleName)
+                                                toast = "No app found to share"
+                                            }
+                                        }
+                                    },
+                                    onSaveCleanCopy = {
+                                        val uri = safeParseMediaUri(item.uri) ?: return@MediaDetailsSheetContent
+                                        scope.launch {
+                                            when (ExifScrubber.saveCleanCopyToGallery(ctx, uri, item.title)) {
+                                                is FarResult.Ok -> {
+                                                    toast = "Saved clean copy without GPS/EXIF"
+                                                    gvm.refreshAll()
+                                                    items.refresh()
+                                                }
+                                                is FarResult.Err -> toast = "Couldn't save clean copy"
+                                            }
+                                        }
+                                    },
+                                )
+                            },
+                            videoContent = { item ->
+                                VideoPlayer(
+                                    uri = item.uri,
+                                    glass = subGlass,
+                                    resumeMs = null,
+                                    onPosition = {},
+                                    onFrameGrab = { ms ->
+                                        val uri = safeParseMediaUri(item.uri) ?: return@VideoPlayer
+                                        scope.launch {
+                                            when (FrameGrabber.grab(ctx, uri, ms)) {
+                                                is FarResult.Ok -> toast = "Saved frame to Pictures/Far Gallery"
+                                                is FarResult.Err -> toast = "Couldn't capture frame"
+                                            }
+                                        }
+                                    },
+                                    onTrim = { dur -> safeParseMediaUri(item.uri)?.let { trimTarget = it to dur } },
+                                    onOpenWith = {
+                                        val uri = safeParseMediaUri(item.uri) ?: return@VideoPlayer
+                                        runCatching {
+                                            activity.startActivity(
+                                                Intent.createChooser(
+                                                    Intent(Intent.ACTION_VIEW)
+                                                        .setDataAndType(uri, "video/*")
+                                                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
+                                                    null,
+                                                )
+                                            )
+                                        }.onFailure { err ->
+                                            LocalDiagnostics.recordEvent(ctx, "FG-OPEN", "video_open_with", err.javaClass.simpleName)
+                                            toast = "No app found to open this video"
+                                        }
+                                    },
+                                )
+                            },
+                        )
+                    }
                 }
 
                 composable("camera") {
                     BackHandler { nav.popBackStack() }
-                    val cvm: CameraViewModel = viewModel()
-                    LaunchedEffect(s.cameraGrid) { cvm.setGridInitial(s.cameraGrid) }
-                    CameraHost(
-                        vm = cvm,
-                        onClose = { nav.popBackStack() },
-                        onOpenLast = { capturedUri ->
-                            viewerList = listOf(
-                                ViewerItem(
-                                    id = -1L,
-                                    uri = capturedUri.toString(),
-                                    title = "Recent capture",
-                                    subtitle = null,
-                                    isVideo = false,
-                                    isFavorite = false,
+                    FarErrorBoundary(
+                        faultCode = null,
+                        onRecover = { nav.popBackStack() },
+                        onBack = { nav.popBackStack() },
+                    ) {
+                        val cvm: CameraViewModel = viewModel()
+                        LaunchedEffect(s.cameraGrid) { cvm.setGridInitial(s.cameraGrid) }
+                        CameraHost(
+                            vm = cvm,
+                            onClose = { nav.popBackStack() },
+                            onOpenLast = { capturedUri ->
+                                viewerList = listOf(
+                                    ViewerItem(
+                                        id = -1L,
+                                        uri = capturedUri.toString(),
+                                        title = "Recent capture",
+                                        subtitle = null,
+                                        isVideo = false,
+                                        isFavorite = false,
+                                    )
                                 )
-                            )
-                            viewerIndex = 0
-                            nav.navigate("viewer")
-                        },
-                    )
+                                viewerIndex = 0
+                                nav.navigate("viewer")
+                            },
+                        )
+                    }
                 }
 
                 composable("editor/{uri}?mediaId={mediaId}") { entry ->
-                    val uri = Uri.parse(entry.arguments?.getString("uri").orEmpty())
+                    val rawArg = entry.arguments?.getString("uri").orEmpty()
+                    val parsedUri = remember(rawArg) { safeParseMediaUri(Uri.decode(rawArg)) }
                     val mediaId = entry.arguments?.getString("mediaId")?.toLongOrNull() ?: 0L
-                    var bmp by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
-                    var err by remember { mutableStateOf<String?>(null) }
-                    var saving by remember { mutableStateOf(false) }
+                    FarErrorBoundary(
+                        faultCode = if (rawArg.isBlank()) "FG-INP-EDIT" else null,
+                        onRecover = { gvm.refreshAll() },
+                        onBack = { nav.popBackStack() },
+                    ) {
+                        var bmp by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+                        var err by remember { mutableStateOf<String?>(null) }
+                        var saving by remember { mutableStateOf(false) }
+                        var initialRecipe by remember(mediaId) { mutableStateOf<EditState?>(null) }
+                        var recipeReady by remember(parsedUri, mediaId) { mutableStateOf(mediaId <= 0L) }
+                        var editorRetryNonce by remember { mutableIntStateOf(0) }
 
-                    LaunchedEffect(uri) {
-                        when (val loaded = EditorEngine.load(ctx, uri, 2048)) {
-                            is FarResult.Ok -> bmp = loaded.value
-                            is FarResult.Err -> err = "This image can't be edited here. The original is untouched."
-                        }
-                    }
-
-                    EditorScreen(
-                        source = bmp,
-                        loading = bmp == null && err == null,
-                        errorText = err,
-                        glass = glass,
-                        saving = saving,
-                        onCancel = { nav.popBackStack() },
-                        onSave = { st ->
-                            val b = bmp ?: return@EditorScreen
-                            saving = true
-                            scope.launch {
-                                when (val res = EditorEngine.saveCopy(ctx, uri, b, st, 94)) {
-                                    is FarResult.Ok -> {
-                                        if (mediaId > 0) {
-                                            db.editRecipes().upsert(
-                                                EditRecipe(
-                                                    mediaId = mediaId,
-                                                    sourceSize = rowById[mediaId]?.sizeBytes ?: 0L,
-                                                    operationsJson = st.toJson(),
-                                                    outputUri = res.value.toString(),
-                                                    updatedAt = System.currentTimeMillis(),
-                                                )
-                                            )
-                                        }
-                                        toast = "Saved a copy"
-                                        gvm.refreshAll()
-                                        items.refresh()
-                                        nav.popBackStack()
-                                    }
-                                    is FarResult.Err -> {
-                                        saving = false
-                                        toast = "Couldn't save. Your original is untouched."
-                                    }
+                        LaunchedEffect(parsedUri, mediaId, editorRetryNonce) {
+                            err = null
+                            if (parsedUri == null) {
+                                LocalDiagnostics.recordEvent(ctx, "FG-INP", "editor_route", "invalid uri")
+                                err = "This image link is invalid. The original is untouched."
+                                return@LaunchedEffect
+                            }
+                            if (mediaId > 0L) {
+                                initialRecipe = EditState.fromJson(db.editRecipes().latestForMedia(mediaId)?.operationsJson)
+                                recipeReady = true
+                            }
+                            when (val loaded = EditorEngine.load(ctx, parsedUri, 2048)) {
+                                is FarResult.Ok -> bmp = loaded.value
+                                is FarResult.Err -> {
+                                    LocalDiagnostics.recordEvent(ctx, loaded.error.code, "editor_load", loaded.error.userTitle())
+                                    err = "This image can't be edited here. The original is untouched."
                                 }
                             }
-                        },
-                    )
+                        }
+
+                        EditorScreen(
+                            source = if (recipeReady) bmp else null,
+                            loading = (!recipeReady || bmp == null) && err == null,
+                            errorText = err,
+                            glass = subGlass,
+                            saving = saving,
+                            initialState = initialRecipe,
+                            stripExifDefault = s.stripLocationOnShare,
+                            onRetry = { err = null; bmp = null; editorRetryNonce++ },
+                            onCancel = { nav.popBackStack() },
+                            onSave = { st, stripExif ->
+                                val targetUri = parsedUri ?: return@EditorScreen
+                                val b = bmp ?: return@EditorScreen
+                                saving = true
+                                scope.launch {
+                                    when (val res = EditorEngine.saveCopy(ctx, targetUri, b, st, 94, stripExif)) {
+                                        is FarResult.Ok -> {
+                                            if (mediaId > 0) {
+                                                db.editRecipes().upsert(
+                                                    EditRecipe(
+                                                        mediaId = mediaId,
+                                                        sourceSize = rowById[mediaId]?.sizeBytes ?: 0L,
+                                                        operationsJson = st.toJson(),
+                                                        outputUri = res.value.toString(),
+                                                        updatedAt = System.currentTimeMillis(),
+                                                    )
+                                                )
+                                            }
+                                            toast = if (stripExif) "Saved clean copy" else "Saved a copy"
+                                            gvm.refreshAll()
+                                            items.refresh()
+                                            nav.popBackStack()
+                                        }
+                                        is FarResult.Err -> {
+                                            saving = false
+                                            LocalDiagnostics.recordEvent(ctx, res.error.code, "editor_save", res.error.userTitle())
+                                            toast = "Couldn't save (${res.error.code}). Original is untouched."
+                                        }
+                                    }
+                                }
+                            },
+                        )
+                    }
+                }
+
+                composable("storage") {
+                    FarErrorBoundary(
+                        faultCode = null,
+                        onRecover = { gvm.refreshAll() },
+                        onBack = { nav.popBackStack() },
+                    ) {
+                        StorageAnalyzerScreen(
+                            rows = libraryRows,
+                            onBack = { nav.popBackStack() },
+                            onPreview = { row ->
+                                viewerList = listOf(
+                                    ViewerItem(
+                                        id = row.id,
+                                        uri = row.uri.toString(),
+                                        title = row.name,
+                                        subtitle = null,
+                                        isVideo = row.isVideo,
+                                        isFavorite = row.id in favorites,
+                                    )
+                                )
+                                viewerIndex = 0
+                                nav.navigate("viewer")
+                            },
+                            onTrash = { trash(it) },
+                        )
+                    }
                 }
 
                 composable("settings") {
-                    SettingsScreen(
-                        s = s,
-                        ocrCount = ocrCount,
-                        safeMode = safeMode,
-                        onLeaveSafeMode = { vm.leaveSafeMode() },
-                        onChange = { t -> vm.update(t) },
-                        onOpenSystemDefaults = {
-                            runCatching { activity.startActivity(DefaultApps.systemDefaults()) }
-                                .onFailure { toast = "Open Android Settings -> Apps -> Default apps" }
-                        },
-                        onFixDefault = { _, st ->
-                            val intent = when (st) {
-                                is DefaultStatus.Other -> DefaultApps.appDetails(st.packageName)
-                                else -> DefaultApps.systemDefaults()
-                            }
-                            runCatching { activity.startActivity(intent) }
-                                .onFailure { toast = "Open Android Settings -> Apps to set defaults" }
-                        },
-                        onClearCache = {
-                            ctx.cacheDir.deleteRecursively()
-                            toast = "Thumbnail cache cleared"
-                        },
-                        onDeleteOcrIndex = {
-                            scope.launch {
-                                db.ocr().clearAll()
-                                toast = "Text index deleted"
-                            }
-                        },
-                        onManageAccess = { permLauncher.launch(Permissions.mediaPermissions()) },
+                    FarErrorBoundary(
+                        faultCode = null,
+                        onRecover = { nav.popBackStack() },
                         onBack = { nav.popBackStack() },
-                    )
+                    ) {
+                        SettingsScreen(
+                            s = s,
+                            ocrCount = ocrCount,
+                            safeMode = safeMode,
+                            onLeaveSafeMode = { vm.leaveSafeMode() },
+                            onChange = { t -> vm.update(t) },
+                            onOpenSystemDefaults = {
+                                runCatching { activity.startActivity(DefaultApps.systemDefaults()) }
+                                    .onFailure { toast = "Open Android Settings -> Apps -> Default apps" }
+                            },
+                            onFixDefault = { _, st ->
+                                val intent = when (st) {
+                                    is DefaultStatus.Other -> DefaultApps.appDetails(st.packageName)
+                                    else -> DefaultApps.systemDefaults()
+                                }
+                                runCatching { activity.startActivity(intent) }
+                                    .onFailure { toast = "Open Android Settings -> Apps to set defaults" }
+                            },
+                            onClearCache = {
+                                ctx.cacheDir.deleteRecursively()
+                                toast = "Thumbnail cache cleared"
+                            },
+                            onDeleteOcrIndex = {
+                                scope.launch {
+                                    db.ocr().clearAll()
+                                    toast = "Text index deleted"
+                                }
+                            },
+                            onManageAccess = { permLauncher.launch(Permissions.mediaPermissions()) },
+                            onOpenStorage = { nav.navigate("storage") },
+                            onBack = { nav.popBackStack() },
+                        )
+                    }
                 }
             }
         }
@@ -952,6 +1442,21 @@ fun FarApp(vm: AppViewModel, activity: Activity, startOnFiles: Boolean) {
             )
         }
 
+        coverPickerAlbum?.let { album ->
+            val candidates = remember(albumRefs, rowById, album.id) {
+                albumRefs.filter { it.albumId == album.id }.mapNotNull { rowById[it.mediaId] }
+            }
+            AlbumCoverPickerDialog(
+                albumName = album.name,
+                candidates = candidates,
+                onPickCover = { mediaId ->
+                    gvm.setAlbumCover(album.id, mediaId)
+                    toast = if (mediaId == null) "Reset cover to auto" else "Album cover updated"
+                },
+                onDismiss = { coverPickerAlbum = null },
+            )
+        }
+
         trimTarget?.let { (uri, durMs) ->
             ModalBottomSheet(onDismissRequest = { if (!trimBusy) trimTarget = null }) {
                 TrimPanel(
@@ -961,13 +1466,16 @@ fun FarApp(vm: AppViewModel, activity: Activity, startOnFiles: Boolean) {
                     onSave = { startMs, endMs ->
                         trimBusy = true
                         scope.launch {
-                            when (VideoTrimmer.trim(ctx, uri, startMs, endMs) { trimProgress = it }) {
+                            when (val res = VideoTrimmer.trim(ctx, uri, startMs, endMs) { trimProgress = it }) {
                                 is FarResult.Ok -> {
                                     toast = "Trimmed copy saved to Movies/Far Gallery"
                                     gvm.refreshAll()
                                     items.refresh()
                                 }
-                                is FarResult.Err -> toast = "Couldn't trim video. Original is untouched."
+                                is FarResult.Err -> {
+                                    LocalDiagnostics.recordEvent(ctx, res.error.code, "video_trim", res.error.userTitle())
+                                    toast = "Couldn't trim video (${res.error.code}). Original is untouched."
+                                }
                             }
                             trimBusy = false
                             trimProgress = null
@@ -977,6 +1485,76 @@ fun FarApp(vm: AppViewModel, activity: Activity, startOnFiles: Boolean) {
                     onCancel = { trimTarget = null },
                 )
             }
+        }
+
+        batchResizeTargets?.let { targets ->
+            BatchResizeDialog(
+                count = targets.size,
+                stripExifDefault = s.stripLocationOnShare,
+                onConfirm = { config ->
+                    batchResizeTargets = null
+                    gvm.clearSelection()
+                    batchJob?.cancel()
+                    batchJob = scope.launch {
+                        batchProgress = OperationUi("Resizing copies", null, 0, targets.size)
+                        try {
+                            val summary = BatchMediaOps.resizeBatch(ctx, targets, config) { done, total, name ->
+                                batchProgress = OperationUi("Resizing copies", name, done, total)
+                            }
+                            toast = buildString {
+                                append("Saved ${summary.succeeded} resized copy(ies)")
+                                if (summary.skipped > 0) append(", ${summary.skipped} video(s) skipped")
+                                if (summary.failed > 0) append(", ${summary.failed} failed")
+                            }
+                            gvm.refreshAll()
+                            items.refresh()
+                        } finally {
+                            batchProgress = null
+                        }
+                    }
+                },
+                onDismiss = { batchResizeTargets = null },
+            )
+        }
+
+        batchRenameTargets?.let { targets ->
+            BatchRenameDialog(
+                sampleNames = targets.map { it.name },
+                onConfirm = { prefix, startNumber ->
+                    batchRenameTargets = null
+                    gvm.clearSelection()
+                    batchJob?.cancel()
+                    batchJob = scope.launch {
+                        batchProgress = OperationUi("Renaming items", null, 0, targets.size)
+                        try {
+                            val summary = BatchMediaOps.renameBatch(ctx, targets, prefix, startNumber) { done, total, name ->
+                                batchProgress = OperationUi("Renaming items", name, done, total)
+                            }
+                            toast = buildString {
+                                append("Renamed ${summary.succeeded} item(s)")
+                                if (summary.failed > 0) append(", ${summary.failed} blocked by Android")
+                            }
+                            gvm.refreshAll()
+                            items.refresh()
+                        } finally {
+                            batchProgress = null
+                        }
+                    }
+                },
+                onDismiss = { batchRenameTargets = null },
+            )
+        }
+
+        comparePickerSourceId?.let { srcId ->
+            CompareSecondPickerDialog(
+                excludeId = srcId,
+                candidates = libraryRows,
+                onPick = { second ->
+                    comparePickerSourceId = null
+                    nav.navigate("compare/$srcId/${second.id}")
+                },
+                onDismiss = { comparePickerSourceId = null },
+            )
         }
     }
 }

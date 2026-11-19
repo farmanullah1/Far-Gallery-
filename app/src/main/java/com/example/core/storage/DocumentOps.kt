@@ -14,8 +14,11 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import java.io.InputStream
+import java.io.OutputStream
 import java.security.MessageDigest
+import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
 
 data class DocEntry(
     val docId: String,
@@ -230,6 +233,57 @@ class DocumentOps(private val r: ContentResolver) {
         }
         count
     }
+
+    /** Compress selected SAF items (files and folders) into a new .zip file in [dstParentDocId]. */
+    fun createZip(
+        tree: Uri,
+        dstParentDocId: String,
+        items: List<DocEntry>,
+        archiveName: String,
+        onProgress: (done: Int, current: String) -> Unit = { _, _ -> },
+    ): FarResult<String> = farCatching {
+        val existing = (list(tree, dstParentDocId) as? FarResult.Ok)?.value?.map { it.name }?.toSet() ?: emptySet()
+        val cleanBase = archiveName.trim().removeSuffix(".zip").ifBlank { "Archive" }
+        val finalName = uniqueName(existing, "$cleanBase.zip")
+        val docId = (create(tree, dstParentDocId, "application/zip", finalName) as? FarResult.Ok)?.value
+            ?: throw java.io.IOException("create archive failed")
+
+        fun collect(entry: DocEntry, prefix: String, acc: MutableList<Pair<String, DocEntry?>>, depth: Int = 0) {
+            if (depth > 32) return
+            val rel = if (prefix.isEmpty()) entry.name else "$prefix/${entry.name}"
+            if (entry.isDir) {
+                acc += "$rel/" to null
+                val children = (list(tree, entry.docId) as? FarResult.Ok)?.value.orEmpty()
+                children.forEach { child -> collect(child, rel, acc, depth + 1) }
+            } else {
+                acc += rel to entry
+            }
+        }
+
+        val queue = ArrayList<Pair<String, DocEntry?>>()
+        items.forEach { collect(it, "", queue) }
+
+        try {
+            r.openOutputStream(docUri(tree, docId))!!.use { out ->
+                var done = 0
+                SafeZip.create(
+                    entries = queue.asSequence().map { (path, entry) ->
+                        val isDir = entry == null
+                        val name = path.substringAfterLast('/', path).ifBlank { path }
+                        onProgress(done++, name)
+                        Triple(path, isDir) {
+                            if (entry == null) null else r.openInputStream(docUri(tree, entry.docId))
+                        }
+                    },
+                    output = out,
+                )
+            }
+        } catch (t: Throwable) {
+            delete(tree, docId)
+            throw t
+        }
+        finalName
+    }
 }
 
 /* ------------------------------ Checksums ------------------------------ */
@@ -299,5 +353,27 @@ object SafeZip {
                 sink(safe, false, counting)
             }
         }
+    }
+
+    /** Creates a ZIP archive onto [output] with sanitized relative entry names and size/entry safety caps. */
+    fun create(entries: Sequence<Triple<String, Boolean, () -> InputStream?>>, output: OutputStream): Int {
+        var count = 0
+        ZipOutputStream(output).use { zos ->
+            for ((rawPath, isDir, openStream) in entries) {
+                if (++count > MAX_ENTRIES) throw IllegalArgumentException("too many entries")
+                val safe = sanitize(rawPath) ?: continue
+                if (safe.isEmpty()) continue
+                if (isDir) {
+                    val dirName = if (safe.endsWith("/")) safe else "$safe/"
+                    zos.putNextEntry(ZipEntry(dirName))
+                    zos.closeEntry()
+                } else {
+                    zos.putNextEntry(ZipEntry(safe))
+                    openStream()?.use { input -> input.copyTo(zos) }
+                    zos.closeEntry()
+                }
+            }
+        }
+        return count
     }
 }

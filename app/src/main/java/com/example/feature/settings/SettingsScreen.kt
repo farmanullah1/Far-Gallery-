@@ -11,27 +11,27 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,12 +49,24 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.style.TextOverflow
 import com.example.R
 import com.example.app.DefaultApps
 import com.example.app.DefaultRole
 import com.example.app.DefaultStatus
+import com.example.app.copyPlainTextToClipboard
 import com.example.core.common.LocalDiagnostics
+import com.example.feature.albums.AlbumSort
+import com.example.ui.components.FarFilterPill
+import com.example.ui.components.FarTopBar
 import com.example.ui.theme.FarPalette
+import com.example.ui.theme.FarSpacing
+import com.example.ui.theme.LocalSemanticColors
+import com.example.ui.theme.MonoFont
 import com.example.ui.theme.ThemeMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -85,6 +97,7 @@ data class FarSettings(
     val ocrEnabled: Boolean = true,
     val memoriesEnabled: Boolean = true,
     val languageTag: String = "",
+    val albumSort: AlbumSort = AlbumSort.Pinned,
 )
 
 class SettingsStore(private val ctx: Context) {
@@ -106,6 +119,7 @@ class SettingsStore(private val ctx: Context) {
         val ocr = booleanPreferencesKey("ocr")
         val mem = booleanPreferencesKey("mem")
         val lang = stringPreferencesKey("lang")
+        val albumSort = stringPreferencesKey("albumSort")
     }
 
     val flow: Flow<FarSettings> = ctx.store.data.map(::read)
@@ -130,6 +144,7 @@ class SettingsStore(private val ctx: Context) {
             p[K.ocr] = s.ocrEnabled
             p[K.mem] = s.memoriesEnabled
             p[K.lang] = s.languageTag
+            p[K.albumSort] = s.albumSort.name
         }
     }
 
@@ -151,6 +166,7 @@ class SettingsStore(private val ctx: Context) {
         ocrEnabled = p[K.ocr] ?: true,
         memoriesEnabled = p[K.mem] ?: true,
         languageTag = p[K.lang] ?: "",
+        albumSort = p[K.albumSort]?.let { runCatching { AlbumSort.valueOf(it) }.getOrNull() } ?: AlbumSort.Pinned,
     )
 }
 
@@ -166,29 +182,34 @@ fun SettingsScreen(
     onClearCache: () -> Unit,
     onDeleteOcrIndex: () -> Unit,
     onManageAccess: () -> Unit,
+    onOpenStorage: () -> Unit = {},
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val ctx = LocalContext.current
-    val lastCrash = remember { LocalDiagnostics.readLastCrash(ctx) }
+    val semantic = LocalSemanticColors.current
+    var diagRefresh by remember { mutableIntStateOf(0) }
+    var diagStatus by remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+    val lastCrash = remember(diagRefresh) { LocalDiagnostics.readLastCrash(ctx) }
+    val diagEvents = remember(diagRefresh) { LocalDiagnostics.readEvents(ctx) }
     BackHandler(onBack = onBack)
 
-    LazyColumn(
+    Column(
         modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding(),
-        contentPadding = PaddingValues(16.dp, 12.dp, 16.dp, 120.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+            .navigationBarsPadding(),
     ) {
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                IconButton(onClick = onBack, modifier = Modifier.testTag("settings_back_button")) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.cd_back))
-                }
-                Text(stringResource(R.string.settings_title), style = MaterialTheme.typography.displayLarge)
-            }
-        }
+        FarTopBar(
+            title = stringResource(R.string.settings_title),
+            onBack = onBack,
+            backTestTag = "settings_back_button",
+        )
+        LazyColumn(
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = FarSpacing.screenPadding, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
 
         if (safeMode || lastCrash != null) {
             item {
@@ -197,12 +218,23 @@ fun SettingsScreen(
                         Text(
                             "Far Gallery started in safe mode after repeated startup crashes. Background indexing is paused.",
                             style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
                         )
-                        TextButton(onClick = onLeaveSafeMode) { Text("Exit safe mode") }
+                        TextButton(onClick = onLeaveSafeMode, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) { Text("Exit safe mode") }
                     }
                     lastCrash?.let {
-                        Text("Last crash log (local only): $it", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        TextButton(onClick = { LocalDiagnostics.dismissLastCrash(ctx) }) { Text("Dismiss note") }
+                        Text(
+                            "Last crash log (local only): $it",
+                            style = MaterialTheme.typography.labelMedium.copy(fontFamily = MonoFont),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        TextButton(
+                            onClick = {
+                                LocalDiagnostics.dismissLastCrash(ctx)
+                                diagRefresh++
+                            },
+                            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                        ) { Text("Dismiss note") }
                     }
                 }
             }
@@ -220,12 +252,13 @@ fun SettingsScreen(
                     Row(
                         Modifier
                             .fillMaxWidth()
+                            .defaultMinSize(minHeight = 48.dp)
                             .clickable { onFixDefault(role, st) }
                             .padding(vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text(role.label)
+                            Text(role.label, color = MaterialTheme.colorScheme.onSurface)
                             Text(role.hint, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Text(
@@ -239,7 +272,9 @@ fun SettingsScreen(
                         )
                     }
                 }
-                TextButton(onOpenSystemDefaults) { Text("Open system default-app settings") }
+                TextButton(onOpenSystemDefaults, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) {
+                    Text("Open system default-app settings")
+                }
             }
         }
 
@@ -247,33 +282,40 @@ fun SettingsScreen(
             Section(stringResource(R.string.settings_appearance)) {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     itemsIndexed(ThemeMode.entries) { _, m ->
-                        FilterChip(
+                        FarFilterPill(
+                            label = stringResource(m.labelRes()),
                             selected = s.theme == m,
                             onClick = { onChange { it.copy(theme = m) } },
-                            label = { Text(if (m == ThemeMode.Amoled) "AMOLED" else m.name) },
                             modifier = Modifier.testTag("theme_${m.name.lowercase()}"),
                         )
                     }
                 }
                 Row(
                     Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("Accent", Modifier.weight(1f))
+                    Text("Accent", Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurface)
                     FarPalette.curated.forEachIndexed { idx, col ->
                         val active = s.accentIndex == idx && !s.dynamicColor
                         Box(
                             Modifier
-                                .size(30.dp)
+                                .size(48.dp)
                                 .clip(CircleShape)
-                                .background(col)
-                                .then(if (active) Modifier.border(2.dp, MaterialTheme.colorScheme.onSurface, CircleShape) else Modifier)
                                 .clickable { onChange { it.copy(accentIndex = idx, dynamicColor = false) } }
                                 .testTag("accent_$idx"),
                             contentAlignment = Alignment.Center,
                         ) {
-                            if (active) Icon(Icons.Filled.Check, "Selected accent", Modifier.size(16.dp), tint = Color.White)
+                            Box(
+                                Modifier
+                                    .size(34.dp)
+                                    .clip(CircleShape)
+                                    .background(col)
+                                    .then(if (active) Modifier.border(2.dp, MaterialTheme.colorScheme.onSurface, CircleShape) else Modifier),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                if (active) Icon(Icons.Filled.Check, "Selected accent", Modifier.size(16.dp), tint = Color.White)
+                            }
                         }
                     }
                 }
@@ -288,7 +330,8 @@ fun SettingsScreen(
             Section(stringResource(R.string.settings_language)) {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     itemsIndexed(AppLanguage.entries) { _, lang ->
-                        FilterChip(
+                        FarFilterPill(
+                            label = stringResource(lang.labelRes),
                             selected = s.languageTag == lang.tag,
                             onClick = {
                                 onChange { it.copy(languageTag = lang.tag) }
@@ -296,7 +339,6 @@ fun SettingsScreen(
                                 else LocaleListCompat.forLanguageTags(lang.tag)
                                 AppCompatDelegate.setApplicationLocales(list)
                             },
-                            label = { Text(stringResource(lang.labelRes)) },
                             modifier = Modifier.testTag("lang_${lang.name.lowercase()}"),
                         )
                     }
@@ -308,8 +350,8 @@ fun SettingsScreen(
             Section(stringResource(R.string.settings_photos)) {
                 Toggle("Memories (On this day)", s.memoriesEnabled) { v -> onChange { it.copy(memoriesEnabled = v) } }
                 Toggle("Resume videos where you left off", s.resumeVideo) { v -> onChange { it.copy(resumeVideo = v) } }
-                Toggle("Strip metadata when editing copies", s.stripLocationOnShare) { v -> onChange { it.copy(stripLocationOnShare = v) } }
-                TextButton(onManageAccess) { Text("Review photo access") }
+                Toggle("Strip GPS & EXIF on shares and edits", s.stripLocationOnShare) { v -> onChange { it.copy(stripLocationOnShare = v) } }
+                TextButton(onManageAccess, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) { Text("Review photo access") }
             }
         }
 
@@ -329,37 +371,91 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                TextButton(onDeleteOcrIndex) { Text("Delete text index") }
-                TextButton(onClearCache) { Text("Clear thumbnail cache (your photos are not deleted)") }
+                TextButton(onOpenStorage, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) { Text("Storage breakdown & large files") }
+                TextButton(onDeleteOcrIndex, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) { Text("Delete text index") }
+                TextButton(onClearCache, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) { Text("Clear thumbnail cache (your photos are not deleted)") }
+            }
+        }
+
+        item {
+            Section(stringResource(R.string.settings_diagnostics)) {
+                if (diagEvents.isEmpty() && lastCrash == null) {
+                    Text(
+                        stringResource(R.string.diagnostics_no_events),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = semantic.success,
+                    )
+                } else {
+                    diagEvents.take(8).forEach { entry ->
+                        Text(
+                            entry,
+                            style = MaterialTheme.typography.labelMedium.copy(fontFamily = MonoFont),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                diagStatus?.let {
+                    Text(it, style = MaterialTheme.typography.labelMedium, color = semantic.info)
+                }
+                val copiedLabel = stringResource(R.string.diagnostics_copied)
+                val clearedLabel = stringResource(R.string.diagnostics_cleared)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(
+                        onClick = {
+                            copyPlainTextToClipboard(ctx, "Far Diagnostics", LocalDiagnostics.buildReport(ctx))
+                            diagStatus = copiedLabel
+                        },
+                        modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("settings_copy_diagnostics"),
+                    ) { Text(stringResource(R.string.diagnostics_copy_report)) }
+                    TextButton(
+                        onClick = {
+                            LocalDiagnostics.clearAll(ctx)
+                            diagRefresh++
+                            diagStatus = clearedLabel
+                        },
+                        modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("settings_clear_diagnostics"),
+                    ) { Text(stringResource(R.string.diagnostics_clear_logs)) }
+                }
             }
         }
 
         item {
             Section(stringResource(R.string.settings_about)) {
-                Text(stringResource(R.string.about_offline_note), style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    stringResource(R.string.about_offline_note),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
             }
+        }
         }
     }
 }
 
 @Composable
 private fun Section(title: String, content: @Composable () -> Unit) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(22.dp))
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Text(title, style = MaterialTheme.typography.titleMedium)
-        content()
+    val semantic = LocalSemanticColors.current
+    CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .background(semantic.elevatedSurface, RoundedCornerShape(22.dp))
+                .border(0.75.dp, semantic.cardBorder, RoundedCornerShape(22.dp))
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+            content()
+        }
     }
 }
 
 @Composable
 private fun Toggle(label: String, value: Boolean, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, Modifier.weight(1f))
+        Text(label, Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurface)
         Switch(value, onChange)
     }
 }

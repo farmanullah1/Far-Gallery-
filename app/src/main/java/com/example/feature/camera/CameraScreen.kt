@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -46,6 +47,7 @@ import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.FlipCameraAndroid
 import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Icon
@@ -53,6 +55,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
@@ -71,16 +74,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -88,10 +90,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.example.R
+import com.example.app.copyPlainTextToClipboard
+import com.example.core.common.LocalDiagnostics
+import com.example.core.common.safeParseMediaUri
 import com.example.ui.feedback.ErrorAction
 import com.example.ui.feedback.ErrorCard
 import com.example.ui.feedback.ErrorInfo
 import com.example.ui.theme.FarPalette
+import com.example.ui.theme.FarSpacing
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
@@ -132,6 +139,7 @@ data class CameraUiState(
     val qrEnabled: Boolean = false,
     val qrResult: String? = null,
     val permissionGranted: Boolean = true,
+    val micPermissionGranted: Boolean = true,
     val error: ErrorInfo? = null,
 )
 
@@ -160,12 +168,12 @@ fun CameraScreen(
         Box(modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
             ErrorCard(
                 ErrorInfo(
-                    title = "Camera access needed",
-                    whatHappened = "Allow camera access to take photos and videos. The rest of Far Gallery keeps working without it.",
+                    title = stringResource(R.string.camera_perm_title),
+                    whatHappened = stringResource(R.string.camera_perm_body),
                     originalsSafe = false,
                     actions = listOf(
-                        ErrorAction("Allow camera", true, onRequestPermission),
-                        ErrorAction("Close", false, onClose),
+                        ErrorAction(stringResource(R.string.camera_perm_allow), true, onRequestPermission),
+                        ErrorAction(stringResource(R.string.action_close), false, onClose),
                     ),
                 )
             )
@@ -180,7 +188,6 @@ fun CameraScreen(
     val haptic = LocalHapticFeedback.current
     val previewView = remember { mutableStateOf<PreviewView?>(null) }
     val ctx = LocalContext.current
-    val clipboard = LocalClipboardManager.current
 
     Box(modifier.fillMaxSize().background(Color.Black)) {
         val viewfinder = if (state.mode == CameraMode.Square) {
@@ -245,6 +252,28 @@ fun CameraScreen(
                 }
 
                 if (state.recording) RecordTimerPill(state.recordingSeconds)
+                else if ((state.mode == CameraMode.Video || state.mode == CameraMode.SloMo) && !state.micPermissionGranted) {
+                    Row(
+                        Modifier
+                            .minimumInteractiveComponentSize()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Color.Black.copy(alpha = 0.68f))
+                            .border(0.75.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(16.dp))
+                            .clickable(onClick = onRequestPermission)
+                            .padding(horizontal = 12.dp, vertical = 7.dp)
+                            .testTag("camera_mic_muted_pill"),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Icon(Icons.Filled.MicOff, null, Modifier.size(14.dp), tint = FarPalette.CameraYellow)
+                        Text(
+                            stringResource(R.string.camera_mic_muted),
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    }
+                }
 
                 CircleIcon(
                     icon = Icons.Filled.KeyboardArrowUp,
@@ -315,16 +344,29 @@ fun CameraScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(payload, color = Color.White, maxLines = 1, modifier = Modifier.weight(1f), fontSize = 13.sp)
-                    TextButton(onClick = { clipboard.setText(AnnotatedString(payload)); onDismissQr() }) {
-                        Text("Copy", color = FarPalette.CameraYellow)
+                    TextButton(
+                        onClick = { copyPlainTextToClipboard(ctx, "QR", payload); onDismissQr() },
+                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                    ) {
+                        Text(stringResource(R.string.action_copy), color = FarPalette.CameraYellow)
                     }
                     if (payload.startsWith("http://") || payload.startsWith("https://")) {
-                        TextButton(onClick = {
-                            runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(payload))) }
-                            onDismissQr()
-                        }) { Text("Open", color = FarPalette.CameraYellow) }
+                        TextButton(
+                            onClick = {
+                                val parsed = safeParseMediaUri(payload)
+                                if (parsed != null) {
+                                    runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, parsed)) }
+                                        .onFailure { err -> LocalDiagnostics.recordEvent(ctx, "FG-CAM-QR", "camera_qr", err.javaClass.simpleName) }
+                                }
+                                onDismissQr()
+                            },
+                            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                        ) { Text(stringResource(R.string.action_open), color = FarPalette.CameraYellow) }
                     }
-                    TextButton(onClick = onDismissQr) { Text("Dismiss", color = Color.White) }
+                    TextButton(
+                        onClick = onDismissQr,
+                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                    ) { Text(stringResource(R.string.action_dismiss), color = Color.White) }
                 }
             }
         }
@@ -403,6 +445,7 @@ private fun OptionChip(
 ) {
     Row(
         Modifier
+            .minimumInteractiveComponentSize()
             .clip(RoundedCornerShape(16.dp))
             .background(if (active) FarPalette.CameraYellow.copy(0.24f) else Color.Transparent)
             .clickable(onClick = onClick)
@@ -445,25 +488,38 @@ private fun CameraPreview(
 @Composable
 private fun ZoomChips(stops: List<Float>, current: Float, onPick: (Float) -> Unit) {
     if (stops.isEmpty()) return
-    Row(Modifier.background(Color.Black.copy(0.35f), CircleShape).padding(4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(
+        Modifier
+            .background(Color.Black.copy(0.35f), CircleShape)
+            .padding(horizontal = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         stops.forEach { z ->
             val selected = kotlin.math.abs(current - z) < 0.15f
             val size by animateDpAsState(if (selected) 40.dp else 32.dp, label = "chip")
             Box(
                 Modifier
-                    .size(size)
+                    .minimumInteractiveComponentSize()
                     .clip(CircleShape)
-                    .background(Color.Black.copy(0.4f))
                     .clickable { onPick(z) }
                     .semantics { role = Role.Button; contentDescription = "Zoom ${z}x" },
                 contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    if (selected) "${trim(current)}×" else trim(z),
-                    color = if (selected) FarPalette.CameraYellow else Color.White,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
+                Box(
+                    Modifier
+                        .size(size)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(0.4f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        if (selected) "${trim(current)}×" else trim(z),
+                        color = if (selected) FarPalette.CameraYellow else Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
             }
         }
     }
@@ -473,19 +529,25 @@ private fun trim(v: Float) = if (v % 1f == 0f) v.toInt().toString() else "%.1f".
 
 @Composable
 private fun ModeCarousel(modes: List<CameraMode>, current: CameraMode, onPick: (CameraMode) -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         modes.forEach { m ->
             val c by animateColorAsState(if (m == current) FarPalette.CameraYellow else Color.White, label = "mode")
-            Text(
-                m.label,
-                color = c,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier
+            Box(
+                Modifier
+                    .minimumInteractiveComponentSize()
+                    .clip(RoundedCornerShape(12.dp))
                     .clickable { onPick(m) }
-                    .padding(vertical = 6.dp)
+                    .padding(horizontal = 6.dp, vertical = 8.dp)
                     .testTag("camera_mode_${m.name.lowercase()}"),
-            )
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    m.label,
+                    color = c,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
         }
     }
 }
@@ -535,7 +597,7 @@ private fun RecordTimerPill(seconds: Int) {
 private fun CircleIcon(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     desc: String,
-    size: Dp = 44.dp,
+    size: Dp = 48.dp,
     tint: Color = Color.White,
     background: Color = Color.Black.copy(0.35f),
     modifier: Modifier = Modifier,

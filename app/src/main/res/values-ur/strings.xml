@@ -67,6 +67,7 @@
     <string name="collection_screenshots">اسکرین شاٹس</string>
     <string name="collection_camera">کیمرہ</string>
     <string name="collection_duplicates">ڈپلیکیٹس</string>
+    <string name="collection_storage_cleanup">اسٹوریج اور صفائی</string>
     <string name="collection_trash">حالیہ حذف شدہ</string>
     <string name="collection_excluded">مستثنیٰ فولڈرز</string>
     <string name="exclude_not_security_note">فائلیں منتقل یا حذف نہیں ہوتیں۔ یہ صرف ٹائم لائن فلٹر ہے، سیکیورٹی فیچر نہیں۔</string>
@@ -78,10 +79,190 @@
     <string name="settings_photos">تصاویر</string>
     <string name="settings_camera">کیمرہ</string>
     <string name="settings_privacy_data">رازداری اور ڈیٹا</string>
+    <string name="settings_diagnostics">تشخیص اور بحالی</string>
     <string name="settings_about">ایپ کے بارے میں</string>
     <string name="settings_language">زبان</string>
     <string name="language_system">سسٹم کی زبان</string>
     <string name="language_en">English</string>
     <string name="language_ur">اردو (RTL)</string>
     <string name="about_offline_note">Far Gallery بغیر انٹرنیٹ اور اکاؤنٹ کے کام کرتا ہے۔ اس ورژن میں نہ انٹرنیٹ کی اجازت ہے اور نہ کوئی خفیہ والٹ۔</string>
+
+    <!-- Viewer, Compare & Histogram -->
+    <string name="viewer_compare">موازنہ</string>
+    <string name="viewer_histogram">ہسٹوگرام</string>
+    <string name="viewer_details">تفصیلات</string>
+    <string name="viewer_add_to_album">البم میں شامل کریں</string>
+    <string name="viewer_item_unavailable">فائل دستیاب نہیں</string>
+    <string name="viewer_item_unavailable_body">یہ میڈیا فائل کھولی نہیں جا سکی یا منتقل ہو چکی ہے۔</string>
+    <string name="viewer_preview_unavailable">پیش منظر دستیاب نہیں</string>
+    <string name="viewer_preview_unavailable_body">یہ تصویر خراب ہے یا اس کا فارمیٹ فون پر نہیں چل سکتا۔</string>
+    <string name="viewer_open_with">کسی اور ایپ میں کھولیں…</string>
+    <string name="compare_title">تصاویر کا موازنہ</string>
+    <string name="compare_sync_on">ہم آہنگ زوم: فعال</string>
+    <string name="compare_sync_off">ہم آہنگ زوم: بند</string>
+    <string name="compare_keep_left">بائیں رکھیں</string>
+    <string name="compare_keep_right">دائیں رکھیں</string>
+    <string name="compare_pick_second">دوسری تصویر چنیں</string>
+    <string name="histogram_title">ہسٹوگرام</string>
+    <string name="histogram_clipped_shadows">سائے %1$d%%</string>
+    <string name="histogram_clipped_highlights">روشنی %1$d%%</string>
+
+    <!-- Batch Resize, Rename & Trash Manager -->
+    <string name="batch_all">سب</string>
+    <string name="batch_fav">پسندیدہ</string>
+    <string name="batch_unfav">ہٹائیں</string>
+    <string name="batch_album">البم</string>
+    <string name="batch_resize">سائز بدلیں</string>
+    <string name="batch_rename">نام بدلیں</string>
+    <string name="batch_compare">موازنہ</string>
+    <string name="batch_resize_title">بیچ سائز و فارمیٹ تبدیلی</string>
+    <string name="batch_rename_title">اجتماعی نام تبدیلی (%1$d)</string>
+    <string name="batch_rename_prefix">فائل کا ابتدائی نام</string>
+    <string name="batch_rename_start">ابتدائی نمبر</string>
+    <string name="batch_rename_preview">پیش منظر: %1$s</string>
+    <string name="batch_quality">معیار %1$d%%</string>
+    <string name="batch_strip_exif">GPS اور EXIF ڈیٹا ہٹائیں</string>
+    <string name="trash_title">حالیہ حذف شدہ</string>
+    <string name="trash_restore_selected">بحال کریں (%1$d)</string>
+    <string name="trash_restore_all">سب بحال کریں</string>
+    <string name="trash_empty_all">ٹریش خالی کریں</string>
+    <string name="trash_empty_confirm_title">کیا %1$d فائلیں مستقل حذف کر دیں؟</string>
+    <string name="trash_empty_confirm_body">اینڈرائیڈ تصدیق مانگے گا۔ مستقل حذف شدہ فائلیں واپس نہیں آ سکیں گی۔</string>
+    <string name="trash_empty_title">ٹریش خالی ہے</string>
+    <string name="trash_empty_body">حذف شدہ تصاویر اور ویڈیوز مستقل مٹانے سے پہلے یہاں نظر آتی ہیں۔</string>
+
+    <!-- Diagnostics, Tile & Home Widget -->
+    <string name="diagnostics_copy_report">رپورٹ کاپی کریں</string>
+    <string name="diagnostics_clear_logs">تشخیص صاف کریں</string>
+    <string name="diagnostics_copied">تشخیصی رپورٹ کاپی ہو گئی</string>
+    <string name="diagnostics_cleared">تشخیصی ریکارڈ صاف کر دیا گیا</string>
+    <string name="diagnostics_no_events">مقامی طور پر کوئی خرابی یا کریش ریکارڈ نہیں ہے۔</string>
+    <string name="qs_tile_theme">تھیم: %1$s</string>
+    <string name="widget_title">Far Gallery</string>
+    <string name="widget_photos">تصاویر</string>
+    <string name="widget_videos">ویڈیوز</string>
+    <string name="widget_favorites">پسندیدہ</string>
+    <string name="widget_description">آف لائن تصاویر، ویڈیوز، پسندیدہ اور اسٹوریج کے اعداد و شمار اور شارٹ کٹس دکھاتا ہے۔</string>
+
+    <!-- Gallery Errors & Empty States -->
+    <string name="gallery_load_error_title">لائبریری لوڈ نہیں ہو سکی</string>
+    <string name="gallery_load_error_body">Far Gallery اس وقت میڈیا انڈیکس نہیں پڑھ سکا۔</string>
+    <string name="gallery_append_error">پرانی فائلیں لوڈ نہیں ہو سکیں۔</string>
+    <string name="gallery_empty_title">ابھی کوئی تصویر یا ویڈیو نہیں</string>
+    <string name="gallery_empty_no_access">Far Gallery صرف وہی میڈیا دکھا سکتا ہے جس کی اجازت ہو۔ رسائی دیں یا تصاویر منتخب کریں۔</string>
+    <string name="gallery_empty_with_access">اس ڈیوائس یا اس فلٹر سے مطابقت رکھنے والی فائلیں یہاں نظر آئیں گی۔</string>
+    <string name="gallery_review_access">رسائی کا جائزہ لیں</string>
+    <string name="camera_mic_muted">خاموش (مائیک بند)</string>
+
+    <!-- Theme Mode Cycling -->
+    <string name="theme_system">خودکار</string>
+    <string name="theme_light">روشن</string>
+    <string name="theme_dark">تاریک</string>
+    <string name="theme_amoled">AMOLED</string>
+    <string name="theme_switched">تھیم: %1$s</string>
+    <string name="cd_cycle_theme">تھیم بدلیں</string>
+
+    <!-- Localized Error Copy -->
+    <string name="error_originals_safe">آپ کی اصل فائلیں تبدیل نہیں کی گئیں۔</string>
+    <string name="err_unsupported_title">غیر تعاون یافتہ فائل فارمیٹ</string>
+    <string name="err_unsupported_summary">یہ فارمیٹ یہاں سپورٹ نہیں ہے (%1$s)۔</string>
+    <string name="err_corrupt_title">خراب یا ناقابلِ مطالعہ فائل</string>
+    <string name="err_corrupt_summary">فائل خراب یا نامکمل معلوم ہوتی ہے۔ اصل فائلیں محفوظ ہیں۔</string>
+    <string name="err_missing_title">فائل نہیں ملی</string>
+    <string name="err_missing_summary">یہ آئٹم Far Gallery سے باہر منتقل یا حذف کر دیا گیا ہے۔</string>
+    <string name="err_permission_title">اجازت درکار ہے</string>
+    <string name="err_permission_summary">اینڈرائیڈ نے %1$s تک رسائی روک دی۔ جاری رکھنے کے لیے دوبارہ اجازت دیں۔</string>
+    <string name="err_storage_title">اسٹوریج کی جگہ کم ہے</string>
+    <string name="err_storage_summary">اپنے فون پر جگہ خالی کریں اور دوبارہ کوشش کریں۔</string>
+    <string name="err_volume_title">اسٹوریج ڈرائیو منقطع ہے</string>
+    <string name="err_volume_summary">ایس ڈی کارڈ یا USB ڈرائیو اب منسلک نہیں ہے۔</string>
+    <string name="err_provider_title">میڈیا سروس دستیاب نہیں</string>
+    <string name="err_provider_summary">اسٹوریج سروس نے جواب دینا بند کر دیا۔ تھوڑی دیر بعد کوشش کریں۔</string>
+    <string name="err_oom_title">تصویر پروسیس کرنے کے لیے بہت بڑی ہے</string>
+    <string name="err_oom_summary">چھوٹے گروپ یا کم ریزولیوشن کے ساتھ دوبارہ کوشش کریں۔</string>
+    <string name="err_io_title">فائل پڑھنے یا لکھنے میں ناکامی</string>
+    <string name="err_io_summary">ان پٹ/آؤٹ پٹ کی خرابی کی وجہ سے عمل مکمل نہ ہو سکا۔ اصل فائلیں محفوظ ہیں۔</string>
+    <string name="err_invalid_title">غلط کارروائی</string>
+    <string name="err_invalid_summary">اپنی تفصیلات چیک کریں اور دوبارہ کوشش کریں (%1$s)۔</string>
+    <string name="err_unknown_title">غیر متوقع مسئلہ</string>
+    <string name="err_unknown_summary">کچھ غلط ہو گیا، لیکن آپ کی اصل فائلیں تبدیل نہیں ہوئیں۔</string>
+
+    <!-- Shared Progress & Controls -->
+    <string name="progress_count_of">%2$d میں سے %1$d</string>
+    <string name="progress_eta_sec">%1$d سیکنڈ باقی</string>
+    <string name="action_pause">روکیں</string>
+    <string name="action_resume">جاری رکھیں</string>
+    <string name="action_dismiss">برخاست کریں</string>
+    <string name="action_clear">صاف کریں</string>
+    <string name="action_clear_all">فلٹر صاف کریں</string>
+    <string name="action_copy">کاپی</string>
+    <string name="action_move">منتقل</string>
+    <string name="action_open">کھولیں</string>
+
+    <!-- Filter & Search Localization -->
+    <string name="filter_videos">ویڈیوز</string>
+    <string name="filter_date">تاریخ</string>
+    <string name="filter_size">سائز</string>
+    <string name="search_placeholder">فائل کا نام، ٹیگ یا تصویر میں متن…</string>
+    <string name="search_ocr_title">آف لائن تصویری متن (OCR)</string>
+    <string name="search_ocr_indexing">تصاویر کی انڈیکسنگ جاری… %1$d%%</string>
+    <string name="search_ocr_disabled">ترتیبات میں بند ہے</string>
+    <string name="search_ocr_limited">%1$d انڈیکس شدہ (منتخب رسائی)</string>
+    <string name="search_ocr_ready">%1$d تصاویر مقامی طور پر انڈیکس ہیں</string>
+    <string name="search_scan_now">ابھی اسکین کریں</string>
+    <string name="search_recent">حالیہ</string>
+    <string name="search_tip">فائل کے نام، ٹیگز اور تصاویر کے اندر متن تلاش کریں۔ قسم، تاریخ یا سائز سے فلٹر کریں۔</string>
+    <string name="search_empty_title">کوئی مماثل آئٹم نہیں ملا</string>
+    <string name="search_empty_indexing_title">انڈیکسنگ جاری ہے (%1$d%%)</string>
+    <string name="search_empty_body">تاریخ یا سائز کے فلٹر صاف کریں یا ہجے بدل کر دیکھیں۔</string>
+    <string name="search_empty_indexing_body">تصاویر کا متن ابھی مکمل طور پر قابلِ تلاش نہیں۔ فائل کے نام کے نتائج مکمل ہیں۔</string>
+    <string name="search_empty_limited_body">Far Gallery صرف ان تصاویر میں تلاش کر سکتا ہے جن کی آپ نے اجازت دی ہے۔</string>
+
+    <!-- Albums, Files, Camera, Editor & Video -->
+    <string name="albums_empty_title">ابھی کوئی البم نہیں</string>
+    <string name="albums_empty_body">کہیں سے بھی تصاویر جمع کرنے کے لیے البم بنائیں۔ اصل فائلیں اپنی جگہ رہتی ہیں۔</string>
+    <string name="albums_new">نیا البم</string>
+    <string name="albums_sort">البم ترتیب دیں</string>
+    <string name="files_locations">مقامات</string>
+    <string name="files_filter_hint">اس فولڈر میں تلاش کریں…</string>
+    <string name="files_empty_title">یہ فولڈر خالی ہے</string>
+    <string name="files_empty_body">یہاں دکھانے کے لیے کچھ نہیں ہے۔</string>
+    <string name="files_no_match_title">کوئی مماثل فائل نہیں ملی</string>
+    <string name="files_no_match_body">اس فولڈر میں \"%1$s\" سے کوئی فائل مطابقت نہیں رکھتی۔</string>
+    <string name="files_clear_search">تلاش صاف کریں</string>
+    <string name="camera_perm_title">کیمرے کی اجازت درکار ہے</string>
+    <string name="camera_perm_body">تصاویر اور ویڈیوز لینے کے لیے کیمرے کی اجازت دیں۔ ایپ کے باقی حصے اس کے بغیر بھی چلتے ہیں۔</string>
+    <string name="camera_perm_allow">کیمرے کی اجازت دیں</string>
+    <string name="editor_save_copy">کاپی محفوظ کریں</string>
+    <string name="editor_saving">محفوظ ہو رہا ہے…</string>
+    <string name="editor_undo">واپس</string>
+    <string name="editor_redo">دوبارہ</string>
+    <string name="editor_reset">ری سیٹ</string>
+    <string name="editor_hold_compare">اصل دیکھنے کے لیے تصویر دبائے رکھیں</string>
+    <string name="editor_discard_title">تبدیلیاں مسترد کریں؟</string>
+    <string name="editor_discard_body">آپ کی اصل تصویر بالکل محفوظ رہے گی۔</string>
+    <string name="editor_discard">مسترد کریں</string>
+    <string name="editor_keep">ترمیم جاری رکھیں</string>
+    <string name="viewer_no_exif">کیمرے کا EXIF ڈیٹا موجود نہیں</string>
+    <string name="storage_title">اسٹوریج اور صفائی</string>
+
+    <!-- Collapsible Filters, Sort & Global Error Boundary -->
+    <string name="filter_filters">فلٹرز</string>
+    <string name="filter_sort">ترتیب</string>
+    <string name="filter_density">گرڈ</string>
+    <string name="filter_all_albums">سب</string>
+    <string name="filter_pinned">پن شدہ</string>
+    <string name="filter_non_empty">بھرے ہوئے</string>
+    <string name="filter_hidden_files">پوشیدہ دکھائیں</string>
+    <string name="filter_ascending">صعودی ترتیب</string>
+    <string name="filter_descending">تازہ ترین پہلے</string>
+    <string name="sort_taken">لینے کی تاریخ</string>
+    <string name="sort_added">شامل تاریخ</string>
+    <string name="sort_modified">تبدیلی</string>
+    <string name="sort_name">نام</string>
+    <string name="sort_size">سائز</string>
+    <string name="error_boundary_title">اس اسکرین میں مسئلہ پیش آیا</string>
+    <string name="error_boundary_body">آپ کی تصاویر اور فائلیں محفوظ ہیں۔ دوبارہ بحال کریں یا واپس جائیں۔</string>
+    <string name="error_boundary_reset">اسکرین بحال کریں</string>
+    <string name="error_boundary_back">واپس جائیں</string>
 </resources>
