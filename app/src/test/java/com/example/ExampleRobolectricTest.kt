@@ -52,6 +52,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -63,6 +64,17 @@ import java.util.zip.ZipOutputStream
 
 @RunWith(RobolectricTestRunner::class)
 class ExampleRobolectricTest {
+
+    @Test(timeout = 15_000)
+    fun mainActivity_initializesWithoutCrash() {
+        val controller = Robolectric.buildActivity(MainActivity::class.java)
+        controller.create()
+        controller.start()
+        controller.resume()
+        val activity = controller.get()
+        assertNotNull(activity)
+        controller.pause().stop().destroy()
+    }
 
     private val resolver: ContentResolver by lazy {
         ApplicationProvider.getApplicationContext<Application>().contentResolver

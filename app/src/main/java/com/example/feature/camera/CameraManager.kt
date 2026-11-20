@@ -72,7 +72,7 @@ class FarCameraManager(private val context: Context) {
     private var recording: Recording? = null
     private val mainExecutor get() = ContextCompat.getMainExecutor(context)
 
-    suspend fun capabilities(): CameraCapabilities? {
+    suspend fun capabilities(): CameraCapabilities? = runCatching {
         val ready = suspendCancellableCoroutine { cont ->
             val f = controller.initializationFuture
             f.addListener({ cont.resume(runCatching { f.get() }.isSuccess) }, mainExecutor)
@@ -91,7 +91,7 @@ class FarCameraManager(private val context: Context) {
         val step = info.exposureState.exposureCompensationStep.toFloat()
         val range = info.exposureState.exposureCompensationRange
         val pm = context.packageManager
-        return CameraCapabilities(
+        CameraCapabilities(
             lensZoomStops = stops,
             minZoom = min,
             maxZoom = max,
@@ -100,7 +100,7 @@ class FarCameraManager(private val context: Context) {
             modes = listOf(CameraMode.Video, CameraMode.Photo, CameraMode.Square),
             hasFrontCamera = pm.hasSystemFeature(PackageManager.FEATURE_CAMERA_FRONT),
         )
-    }
+    }.getOrNull()
 
     fun setMode(mode: CameraMode) {
         controller.setEnabledUseCases(

@@ -40,6 +40,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
@@ -304,17 +305,26 @@ class GalleryViewModel(
     val selection = MutableStateFlow<Set<Long>>(emptySet())
     private val refreshNonce = MutableStateFlow(0)
 
-    val favoriteIds: StateFlow<Set<Long>> = db.favorites().ids().map { it.toSet() }
+    val favoriteIds: StateFlow<Set<Long>> = db.favorites().ids()
+        .map { it.toSet() }
+        .catch { emit(emptySet()) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
-    val excludedFolders: StateFlow<List<String>> = db.folders().excluded().map { list -> list.map { it.relativePath } }
+    val excludedFolders: StateFlow<List<String>> = db.folders().excluded()
+        .map { list -> list.map { it.relativePath } }
+        .catch { emit(emptyList()) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val albums: StateFlow<List<AlbumEntity>> = db.albums().albums()
+        .catch { emit(emptyList()) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val albumRefs: StateFlow<List<AlbumMediaRef>> = db.albums().allRefs()
+        .catch { emit(emptyList()) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
-    val recentSearches: StateFlow<List<String>> = db.history().recent().map { list -> list.map { it.query } }
+    val recentSearches: StateFlow<List<String>> = db.history().recent()
+        .map { list -> list.map { it.query } }
+        .catch { emit(emptyList()) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val ocrCount: StateFlow<Int> = db.ocr().indexedCount()
+        .catch { emit(0) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
 
     val libraryRows: StateFlow<List<MediaRow>> =
@@ -325,6 +335,7 @@ class GalleryViewModel(
                     emit((res as? FarResult.Ok)?.value ?: emptyList())
                 }
             }
+            .catch { emit(emptyList()) }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private val queryTrigger: Flow<Params> = combine(
@@ -340,6 +351,7 @@ class GalleryViewModel(
                 page.map<MediaRow, GalleryItem> { it.toItem(emptySet()) }.withHeaders(p.zoom, p.sort)
             }
         }
+        .catch { emit(PagingData.empty()) }
         .cachedIn(viewModelScope)
 
     private data class Params(val filter: MediaFilter, val sort: SortKey, val desc: Boolean, val zoom: LibraryZoom, val nonce: Int)

@@ -42,10 +42,12 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.os.LocaleListCompat
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -69,9 +71,13 @@ import com.example.ui.theme.LocalSemanticColors
 import com.example.ui.theme.MonoFont
 import com.example.ui.theme.ThemeMode
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 
-private val Context.store by preferencesDataStore("far_settings")
+private val Context.store by preferencesDataStore(
+    name = "far_settings",
+    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
+)
 
 enum class AppLanguage(val tag: String, val labelRes: Int) {
     System("", R.string.language_system),
@@ -122,29 +128,38 @@ class SettingsStore(private val ctx: Context) {
         val albumSort = stringPreferencesKey("albumSort")
     }
 
-    val flow: Flow<FarSettings> = ctx.store.data.map(::read)
+    val flow: Flow<FarSettings> = ctx.store.data
+        .catch { err ->
+            LocalDiagnostics.recordEvent(ctx, "FG-PREFS", "settings_read", err.javaClass.simpleName)
+            emit(emptyPreferences())
+        }
+        .map { p -> runCatching { read(p) }.getOrDefault(FarSettings()) }
 
     suspend fun update(t: (FarSettings) -> FarSettings) {
-        ctx.store.edit { p: MutablePreferences ->
-            val s = t(read(p))
-            p[K.theme] = s.theme.name
-            p[K.accent] = s.accentIndex
-            p[K.dyn] = s.dynamicColor
-            p[K.rm] = s.reduceMotion
-            p[K.rt] = s.reduceTransparency
-            p[K.hap] = s.haptics
-            p[K.cols] = s.gridColumns
-            p[K.onb] = s.onboardingDone
-            p[K.trash] = s.trashDays
-            p[K.resume] = s.resumeVideo
-            p[K.strip] = s.stripLocationOnShare
-            p[K.vol] = s.volumeKeyShutter
-            p[K.mirror] = s.mirrorSelfie
-            p[K.grid] = s.cameraGrid
-            p[K.ocr] = s.ocrEnabled
-            p[K.mem] = s.memoriesEnabled
-            p[K.lang] = s.languageTag
-            p[K.albumSort] = s.albumSort.name
+        runCatching {
+            ctx.store.edit { p: MutablePreferences ->
+                val s = t(read(p))
+                p[K.theme] = s.theme.name
+                p[K.accent] = s.accentIndex
+                p[K.dyn] = s.dynamicColor
+                p[K.rm] = s.reduceMotion
+                p[K.rt] = s.reduceTransparency
+                p[K.hap] = s.haptics
+                p[K.cols] = s.gridColumns
+                p[K.onb] = s.onboardingDone
+                p[K.trash] = s.trashDays
+                p[K.resume] = s.resumeVideo
+                p[K.strip] = s.stripLocationOnShare
+                p[K.vol] = s.volumeKeyShutter
+                p[K.mirror] = s.mirrorSelfie
+                p[K.grid] = s.cameraGrid
+                p[K.ocr] = s.ocrEnabled
+                p[K.mem] = s.memoriesEnabled
+                p[K.lang] = s.languageTag
+                p[K.albumSort] = s.albumSort.name
+            }
+        }.onFailure { err ->
+            LocalDiagnostics.recordEvent(ctx, "FG-PREFS", "settings_save", err.javaClass.simpleName)
         }
     }
 

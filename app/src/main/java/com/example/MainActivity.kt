@@ -25,9 +25,12 @@ import com.example.app.IncomingRoute
 import com.example.app.IntentRouter
 import com.example.core.common.IncomingMediaResolver
 import com.example.core.common.IncomingResult
+import com.example.core.common.LocalDiagnostics
 import com.example.core.database.FarDatabase
 import com.example.feature.settings.FarSettings
 import com.example.feature.settings.SettingsStore
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -35,20 +38,30 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
 
 class FarApplication : Application(), ImageLoaderFactory {
-    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val appExceptionHandler = CoroutineExceptionHandler { _, e ->
+        LocalDiagnostics.recordEvent(this, "FG-APP-INIT", "app_scope", e.javaClass.simpleName)
+    }
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO + appExceptionHandler)
     private val startMs = System.currentTimeMillis()
 
     override fun onCreate() {
         super.onCreate()
-        appScope.launch {
-            FarDatabase.get(this@FarApplication).operations().markInterrupted(System.currentTimeMillis())
-        }
         installCrashNote()
+        appScope.launch {
+            try {
+                FarDatabase.get(this@FarApplication).operations().markInterrupted(System.currentTimeMillis())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                LocalDiagnostics.recordEvent(this@FarApplication, "FG-DB-INIT", "mark_interrupted", e.javaClass.simpleName)
+            }
+        }
     }
 
     override fun newImageLoader(): ImageLoader =
@@ -111,43 +124,58 @@ object Permissions {
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val store = SettingsStore(app)
-    val settings: StateFlow<FarSettings?> = store.flow.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    val settings: StateFlow<FarSettings?> = store.flow
+        .catch { err ->
+            LocalDiagnostics.recordEvent(getApplication(), "FG-PREFS", "vm_settings", err.javaClass.simpleName)
+            emit(FarSettings())
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     private val _route = MutableStateFlow<IncomingRoute>(IncomingRoute.None)
     val route: StateFlow<IncomingRoute> = _route.asStateFlow()
     private val _incoming = MutableStateFlow<IncomingResult?>(null)
     val incoming: StateFlow<IncomingResult?> = _incoming.asStateFlow()
-    private val _access = MutableStateFlow(Permissions.access(app))
+    private val _access = MutableStateFlow(runCatching { Permissions.access(app) }.getOrDefault(Access.None))
     val access: StateFlow<Access> = _access.asStateFlow()
     private val _safeMode = MutableStateFlow(false)
     val safeMode: StateFlow<Boolean> = _safeMode.asStateFlow()
 
     init {
-        val f = File(app.filesDir, "crash_count.txt")
-        _safeMode.value = (f.takeIf { it.exists() }?.readText()?.toIntOrNull() ?: 0) >= 3
+        _safeMode.value = runCatching {
+            val f = File(app.filesDir, "crash_count.txt")
+            (f.takeIf { it.exists() }?.readText()?.toIntOrNull() ?: 0) >= 3
+        }.getOrDefault(false)
     }
 
     fun leaveSafeMode() {
-        File(getApplication<Application>().filesDir, "crash_count.txt").delete()
+        runCatching { File(getApplication<Application>().filesDir, "crash_count.txt").delete() }
         _safeMode.value = false
     }
 
     fun markHealthyStart() {
-        File(getApplication<Application>().filesDir, "crash_count.txt").delete()
+        runCatching { File(getApplication<Application>().filesDir, "crash_count.txt").delete() }
     }
 
     fun refreshAccess() {
-        _access.value = Permissions.access(getApplication())
+        _access.value = runCatching { Permissions.access(getApplication()) }.getOrDefault(Access.None)
     }
 
     fun update(t: (FarSettings) -> FarSettings) = viewModelScope.launch { store.update(t) }
 
     fun handleIntent(intent: Intent?) {
-        val r = IntentRouter.classify(intent)
+        val r = runCatching { IntentRouter.classify(intent) }
+            .onFailure { err ->
+                LocalDiagnostics.recordEvent(getApplication(), "FG-INTENT", "classify", err.javaClass.simpleName)
+            }
+            .getOrDefault(IncomingRoute.None)
         _route.value = r
         if (r is IncomingRoute.ViewOrReceive) {
             viewModelScope.launch(Dispatchers.IO) {
-                _incoming.value = IncomingMediaResolver(getApplication<Application>().contentResolver).resolve(r.intent)
+                _incoming.value = runCatching {
+                    IncomingMediaResolver(getApplication<Application>().contentResolver).resolve(r.intent)
+                }.onFailure { err ->
+                    LocalDiagnostics.recordEvent(getApplication(), "FG-INCOMING", "resolve", err.javaClass.simpleName)
+                }.getOrNull()
             }
         }
     }
@@ -162,12 +190,17 @@ class MainActivity : AppCompatActivity() {
     private val vm: AppViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        val splash = installSplashScreen()
+        val splash = runCatching { installSplashScreen() }.getOrNull()
+        if (splash == null) {
+            setTheme(R.style.Theme_FarGallery)
+        }
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
-        splash.setKeepOnScreenCondition { vm.settings.value == null }
+        runCatching { enableEdgeToEdge() }
+        splash?.setKeepOnScreenCondition { vm.settings.value == null }
         if (savedInstanceState == null) vm.handleIntent(intent)
-        val startFiles = intent?.component?.className?.endsWith("FilesLauncher") == true
+        val startFiles = runCatching {
+            intent?.component?.className?.endsWith("FilesLauncher") == true
+        }.getOrDefault(false)
         setContent { FarApp(vm, activity = this, startOnFiles = startFiles) }
     }
 

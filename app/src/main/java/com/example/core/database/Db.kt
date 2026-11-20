@@ -1,6 +1,7 @@
 package com.example.core.database
 
 import android.content.Context
+import android.database.sqlite.SQLiteException
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
@@ -11,6 +12,10 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.sqlite.db.SupportSQLiteDatabase
+import androidx.sqlite.db.SupportSQLiteOpenHelper
+import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
+import com.example.core.common.LocalDiagnostics
 import kotlinx.coroutines.flow.Flow
 
 /** App-owned metadata only. MediaStore stays the source of truth for media. Zero vault tables. */
@@ -286,9 +291,78 @@ abstract class FarDatabase : RoomDatabase() {
         private var instance: FarDatabase? = null
 
         fun get(ctx: Context): FarDatabase = instance ?: synchronized(this) {
-            instance ?: Room.databaseBuilder(ctx.applicationContext, FarDatabase::class.java, "far.db")
-                // Never use fallbackToDestructiveMigration: user albums and tags must survive upgrades.
+            val appCtx = ctx.applicationContext
+            instance ?: Room.databaseBuilder(appCtx, FarDatabase::class.java, "far.db")
+                // Preserve user albums/tags across normal upgrades while recovering safely if on-disk DB is corrupt or incompatible.
+                .openHelperFactory(RecoveringOpenHelperFactory(appCtx, FrameworkSQLiteOpenHelperFactory()))
                 .build().also { instance = it }
         }
+    }
+}
+
+private class RecoveringOpenHelperFactory(
+    private val appContext: Context,
+    private val delegate: SupportSQLiteOpenHelper.Factory,
+) : SupportSQLiteOpenHelper.Factory {
+    override fun create(configuration: SupportSQLiteOpenHelper.Configuration): SupportSQLiteOpenHelper {
+        val initial = delegate.create(configuration)
+        return RecoveringOpenHelper(appContext, configuration.name, initial) {
+            delegate.create(configuration)
+        }
+    }
+}
+
+private class RecoveringOpenHelper(
+    private val appContext: Context,
+    private val dbName: String?,
+    initial: SupportSQLiteOpenHelper,
+    private val recreate: () -> SupportSQLiteOpenHelper,
+) : SupportSQLiteOpenHelper {
+    @Volatile
+    private var current: SupportSQLiteOpenHelper = initial
+
+    override val databaseName: String?
+        get() = current.databaseName
+
+    override fun setWriteAheadLoggingEnabled(enabled: Boolean) {
+        current.setWriteAheadLoggingEnabled(enabled)
+    }
+
+    override val writableDatabase: SupportSQLiteDatabase
+        get() = openSafely { it.writableDatabase }
+
+    override val readableDatabase: SupportSQLiteDatabase
+        get() = openSafely { it.readableDatabase }
+
+    private fun openSafely(op: (SupportSQLiteOpenHelper) -> SupportSQLiteDatabase): SupportSQLiteDatabase {
+        return try {
+            op(current)
+        } catch (e: IllegalStateException) {
+            recover(e, op)
+        } catch (e: SQLiteException) {
+            recover(e, op)
+        }
+    }
+
+    @Synchronized
+    private fun recover(
+        cause: Throwable,
+        op: (SupportSQLiteOpenHelper) -> SupportSQLiteDatabase,
+    ): SupportSQLiteDatabase {
+        return try {
+            op(current)
+        } catch (_: Throwable) {
+            LocalDiagnostics.recordEvent(appContext, "FG-DB-REC", "room_open", cause.javaClass.simpleName)
+            runCatching { current.close() }
+            if (!dbName.isNullOrBlank()) {
+                runCatching { appContext.deleteDatabase(dbName) }
+            }
+            current = recreate()
+            op(current)
+        }
+    }
+
+    override fun close() {
+        runCatching { current.close() }
     }
 }

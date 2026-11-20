@@ -39,6 +39,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -84,6 +85,7 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
     init {
         viewModelScope.launch {
             combine(db.folders().grants(), db.folders().favoriteFolders()) { grants, favs -> grants to favs }
+                .catch { emit(emptyList<FolderGrant>() to emptyList()) }
                 .collect { (grants, favs) ->
                     starredList = favs
                     val places = buildList {

@@ -270,7 +270,11 @@ fun FarTheme(
     val ctx = LocalContext.current
     val baseScheme: ColorScheme = when {
         useDynamicColor && Build.VERSION.SDK_INT >= 31 ->
-            if (dark) dynamicDarkColorScheme(ctx) else dynamicLightColorScheme(ctx)
+            runCatching {
+                if (dark) dynamicDarkColorScheme(ctx) else dynamicLightColorScheme(ctx)
+            }.getOrElse {
+                if (dark) darkScheme(accent, amoled) else lightScheme(accent)
+            }
         dark -> darkScheme(accent, amoled)
         else -> lightScheme(accent)
     }
@@ -280,10 +284,12 @@ fun FarTheme(
     if (!view.isInEditMode) {
         SideEffect {
             ctx.findActivity()?.window?.let { window ->
-                val lightIcons = !(forceDarkSystemBars ?: dark)
-                val controller = WindowCompat.getInsetsController(window, view)
-                controller.isAppearanceLightStatusBars = lightIcons
-                controller.isAppearanceLightNavigationBars = lightIcons
+                runCatching {
+                    val lightIcons = !(forceDarkSystemBars ?: dark)
+                    val controller = WindowCompat.getInsetsController(window, view)
+                    controller.isAppearanceLightStatusBars = lightIcons
+                    controller.isAppearanceLightNavigationBars = lightIcons
+                }
             }
         }
     }

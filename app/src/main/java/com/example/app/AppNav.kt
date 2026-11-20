@@ -134,6 +134,7 @@ import com.example.ui.theme.FarSpacing
 import com.example.ui.theme.FarTheme
 import com.example.ui.theme.LocalSemanticColors
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.ZoneId
@@ -193,7 +194,9 @@ fun FarApp(vm: AppViewModel, activity: Activity, startOnFiles: Boolean) {
         val recentSearches by gvm.recentSearches.collectAsState()
         val ocrCount by gvm.ocrCount.collectAsState()
         val excludedFolders by gvm.excludedFolders.collectAsState()
-        val interruptedOps by db.operations().interrupted().collectAsState(initial = emptyList())
+        val interruptedOps by remember(db) {
+            db.operations().interrupted().catch { emit(emptyList()) }
+        }.collectAsState(initial = emptyList())
 
         var viewerList by remember { mutableStateOf<List<ViewerItem>>(emptyList()) }
         var viewerIndex by remember { mutableIntStateOf(0) }
@@ -605,7 +608,7 @@ fun FarApp(vm: AppViewModel, activity: Activity, startOnFiles: Boolean) {
                                                 onClearRecent = { gvm.clearSearchHistory() },
                                                 index = when {
                                                     !s.ocrEnabled -> IndexStatus.Disabled
-                                                    ocrPercent != null -> IndexStatus.Indexing(ocrPercent!!)
+                                                    ocrPercent != null -> IndexStatus.Indexing(ocrPercent ?: 0)
                                                     access == Access.Selected -> IndexStatus.LimitedAccess
                                                     else -> IndexStatus.Ready
                                                 },
@@ -1150,7 +1153,9 @@ fun FarApp(vm: AppViewModel, activity: Activity, startOnFiles: Boolean) {
                                 }
                             },
                             detailsContent = { item ->
-                                val tags by db.tags().tagsForMedia(item.id).collectAsState(initial = emptyList())
+                                val tags by remember(db, item.id) {
+                                    db.tags().tagsForMedia(item.id).catch { emit(emptyList()) }
+                                }.collectAsState(initial = emptyList())
                                 var ocrText by remember(item.id) { mutableStateOf<String?>(null) }
                                 var ocrBusy by remember(item.id) { mutableStateOf(false) }
                                 LaunchedEffect(item.id) {

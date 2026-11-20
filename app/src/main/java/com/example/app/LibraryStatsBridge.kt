@@ -58,21 +58,23 @@ object LibraryStatsBridge {
     }
 
     fun syncFromRows(ctx: Context, rows: List<MediaRow>, favoriteCount: Int) {
-        var photos = 0
-        var videos = 0
-        var bytes = 0L
-        rows.forEach { r ->
-            if (r.isVideo) videos++ else photos++
-            bytes += r.sizeBytes.coerceAtLeast(0L)
+        runCatching {
+            var photos = 0
+            var videos = 0
+            var bytes = 0L
+            rows.forEach { r ->
+                if (r.isVideo) videos++ else photos++
+                bytes += r.sizeBytes.coerceAtLeast(0L)
+            }
+            ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putInt(K_PHOTOS, photos)
+                .putInt(K_VIDEOS, videos)
+                .putInt(K_FAVS, favoriteCount)
+                .putLong(K_BYTES, bytes)
+                .putLong(K_UPDATED, System.currentTimeMillis())
+                .apply()
+            notifyWidgets(ctx)
         }
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putInt(K_PHOTOS, photos)
-            .putInt(K_VIDEOS, videos)
-            .putInt(K_FAVS, favoriteCount)
-            .putLong(K_BYTES, bytes)
-            .putLong(K_UPDATED, System.currentTimeMillis())
-            .apply()
-        notifyWidgets(ctx)
     }
 
     suspend fun refreshFromSystem(ctx: Context) {
@@ -85,10 +87,12 @@ object LibraryStatsBridge {
     }
 
     fun notifyWidgets(ctx: Context) {
-        val mgr = AppWidgetManager.getInstance(ctx) ?: return
-        val ids = mgr.getAppWidgetIds(ComponentName(ctx, LibraryStatsWidgetProvider::class.java))
-        if (ids.isNotEmpty()) {
-            LibraryStatsWidgetProvider.updateWidgets(ctx, mgr, ids)
+        runCatching {
+            val mgr = AppWidgetManager.getInstance(ctx) ?: return
+            val ids = mgr.getAppWidgetIds(ComponentName(ctx, LibraryStatsWidgetProvider::class.java))
+            if (ids.isNotEmpty()) {
+                LibraryStatsWidgetProvider.updateWidgets(ctx, mgr, ids)
+            }
         }
     }
 }

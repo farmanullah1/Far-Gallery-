@@ -49,10 +49,13 @@ object IntentRouter {
             Intent.ACTION_SEND, Intent.ACTION_SEND_MULTIPLE -> IncomingRoute.ViewOrReceive(intent, shared = true)
             Intent.ACTION_EDIT -> data?.let(IncomingRoute::Edit) ?: IncomingRoute.None
             Intent.ACTION_GET_CONTENT, Intent.ACTION_PICK, MediaStore.ACTION_PICK_IMAGES -> IncomingRoute.Pick(
-                multiple = intent.getBooleanExtra(Intent.EXTRA_ALLOW_MULTIPLE, false) ||
-                    intent.getIntExtra(MediaStore.EXTRA_PICK_IMAGES_MAX, 1) > 1,
-                maxItems = intent.getIntExtra(MediaStore.EXTRA_PICK_IMAGES_MAX, 100).coerceIn(1, 500),
-                mimeTypes = intent.getStringArrayExtra(Intent.EXTRA_MIME_TYPES)?.toList() ?: listOf(type.ifEmpty { "*/*" }),
+                multiple = runCatching {
+                    intent.getBooleanExtra(Intent.EXTRA_ALLOW_MULTIPLE, false) ||
+                        intent.getIntExtra(MediaStore.EXTRA_PICK_IMAGES_MAX, 1) > 1
+                }.getOrDefault(false),
+                maxItems = runCatching { intent.getIntExtra(MediaStore.EXTRA_PICK_IMAGES_MAX, 100) }.getOrDefault(100).coerceIn(1, 500),
+                mimeTypes = runCatching { intent.getStringArrayExtra(Intent.EXTRA_MIME_TYPES)?.toList() }.getOrNull()
+                    ?: listOf(type.ifEmpty { "*/*" }),
             )
             MediaStore.ACTION_IMAGE_CAPTURE, MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA -> IncomingRoute.Capture(
                 video = false,
@@ -63,15 +66,15 @@ object IntentRouter {
             MediaStore.ACTION_VIDEO_CAPTURE, MediaStore.INTENT_ACTION_VIDEO_CAMERA -> IncomingRoute.Capture(
                 video = true,
                 output = outputUri(intent),
-                maxDurationSec = intent.getIntExtra(MediaStore.EXTRA_DURATION_LIMIT, 0).takeIf { it > 0 },
-                maxBytes = intent.getLongExtra(MediaStore.EXTRA_SIZE_LIMIT, 0L).takeIf { it > 0 },
+                maxDurationSec = runCatching { intent.getIntExtra(MediaStore.EXTRA_DURATION_LIMIT, 0) }.getOrDefault(0).takeIf { it > 0 },
+                maxBytes = runCatching { intent.getLongExtra(MediaStore.EXTRA_SIZE_LIMIT, 0L) }.getOrDefault(0L).takeIf { it > 0 },
             )
             else -> IncomingRoute.None
         }
     }
 
     @Suppress("DEPRECATION")
-    private fun outputUri(i: Intent): Uri? = i.getParcelableExtra(MediaStore.EXTRA_OUTPUT)
+    private fun outputUri(i: Intent): Uri? = runCatching { i.getParcelableExtra<Uri>(MediaStore.EXTRA_OUTPUT) }.getOrNull()
 }
 
 /** Result helpers so callers always get a correct, permission-granted reply. */
