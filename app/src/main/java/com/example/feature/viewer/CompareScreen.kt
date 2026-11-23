@@ -70,18 +70,18 @@ import com.example.ui.components.FarFilterPill
 import com.example.ui.feedback.ErrorAction
 import com.example.ui.feedback.ErrorCard
 import com.example.ui.feedback.ErrorInfo
+import com.example.ui.glass.FarGlassState
 import com.example.ui.glass.GlassKind
 import com.example.ui.glass.glass
 import com.example.ui.glass.glassSource
 import com.example.ui.theme.FarSpacing
 import com.example.ui.theme.MonoFont
-import dev.chrisbanes.haze.HazeState
 
 @Composable
 fun CompareScreen(
     left: MediaRow?,
     right: MediaRow?,
-    glass: HazeState,
+    glass: FarGlassState,
     onTrash: (MediaRow) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,

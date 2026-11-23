@@ -2,8 +2,6 @@ package com.example.feature.camera
 
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
-import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.MeteringPoint
 import androidx.camera.view.LifecycleCameraController
 import androidx.camera.view.PreviewView
@@ -24,6 +22,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -37,19 +36,29 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BurstMode
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContactPage
+import androidx.compose.material.icons.filled.CropFree
+import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.FlashAuto
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.FlipCameraAndroid
 import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -84,6 +93,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -98,16 +108,16 @@ import com.example.ui.feedback.ErrorAction
 import com.example.ui.feedback.ErrorCard
 import com.example.ui.feedback.ErrorInfo
 import com.example.ui.theme.FarPalette
-import com.example.ui.theme.FarSpacing
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
-enum class CameraMode(val label: String) {
-    SloMo("SLO-MO"),
-    Video("VIDEO"),
-    Photo("PHOTO"),
-    Square("SQUARE"),
-    Portrait("PORTRAIT"),
+enum class CameraMode(val label: String, val labelRes: Int) {
+    SloMo("SLO-MO", R.string.camera_mode_video),
+    Video("VIDEO", R.string.camera_mode_video),
+    Photo("PHOTO", R.string.camera_mode_photo),
+    Square("SQUARE", R.string.camera_mode_square),
+    Scan("SCAN", R.string.camera_mode_scan),
+    Portrait("PORTRAIT", R.string.camera_mode_photo),
 }
 
 enum class FlashMode { Off, Auto, On }
@@ -134,8 +144,13 @@ data class CameraUiState(
     val timerSeconds: Int = 0,
     val countdown: Int? = null,
     val exposureEv: Float = 0f,
+    val aeAfLocked: Boolean = false,
     val lastCaptureUri: String? = null,
+    val lastCaptureWasScan: Boolean = false,
     val gridOn: Boolean = false,
+    val levelEnabled: Boolean = false,
+    val burstMode: Boolean = false,
+    val burstCount: Int? = null,
     val qrEnabled: Boolean = false,
     val qrResult: String? = null,
     val permissionGranted: Boolean = true,
@@ -163,6 +178,11 @@ fun CameraScreen(
     onRequestPermission: () -> Unit,
     lastThumbnail: @Composable (String) -> Unit,
     modifier: Modifier = Modifier,
+    onToggleLevel: () -> Unit = {},
+    onToggleBurst: () -> Unit = {},
+    onFocusPoint: (MeteringPoint?, Boolean) -> Unit = { _, _ -> },
+    onClearFocusLock: () -> Unit = {},
+    onEditLastScan: ((String) -> Unit)? = null,
 ) {
     if (!state.permissionGranted) {
         Box(modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
@@ -201,28 +221,43 @@ fun CameraScreen(
             onPreviewView = { previewView.value = it },
             modifier = viewfinder
                 .clip(RoundedCornerShape(20.dp))
-                .pointerInput(Unit) {
+                .pointerInput(caps.minZoom, caps.maxZoom, state.zoom) {
                     detectTransformGestures { _, _, zoom, _ ->
                         onZoom((state.zoom * zoom).coerceIn(caps.minZoom, caps.maxZoom))
                     }
                 }
                 .pointerInput(Unit) {
-                    detectTapGestures { pos ->
-                        focusPoint = pos
-                        previewView.value?.let { pv ->
-                            val p: MeteringPoint = pv.meteringPointFactory.createPoint(pos.x, pos.y)
-                            controller.cameraControl?.startFocusAndMetering(FocusMeteringAction.Builder(p).build())
-                        }
-                    }
+                    detectTapGestures(
+                        onTap = { pos ->
+                            focusPoint = pos
+                            val pt = previewView.value?.meteringPointFactory?.createPoint(pos.x, pos.y)
+                            onFocusPoint(pt, false)
+                        },
+                        onLongPress = { pos ->
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            focusPoint = pos
+                            val pt = previewView.value?.meteringPointFactory?.createPoint(pos.x, pos.y)
+                            onFocusPoint(pt, true)
+                        },
+                    )
                 },
         )
-        if (state.gridOn) {
+        if (state.gridOn || state.levelEnabled || state.mode == CameraMode.Scan) {
             Box(viewfinder) {
-                GridOverlay()
-                LevelIndicator()
+                if (state.gridOn) GridOverlay()
+                if (state.levelEnabled) LevelIndicator()
+                if (state.mode == CameraMode.Scan) ScanFrameOverlay()
             }
         }
-        FocusIndicator(focusPoint, state.exposureEv, caps.exposureRange, onExposure) { focusPoint = null }
+        FocusIndicator(
+            point = focusPoint,
+            ev = state.exposureEv,
+            locked = state.aeAfLocked,
+            range = caps.exposureRange,
+            onEv = onExposure,
+        ) {
+            if (!state.aeAfLocked) focusPoint = null
+        }
 
         // -------- Top bar --------
         Column(
@@ -237,7 +272,11 @@ fun CameraScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    CircleIcon(Icons.Filled.Close, "Close camera", onClick = onClose)
+                    CircleIcon(
+                        icon = Icons.Filled.Close,
+                        desc = stringResource(R.string.cd_close_camera),
+                        onClick = onClose,
+                    )
                     if (caps.hasFlash) {
                         CircleIcon(
                             icon = when (state.flash) {
@@ -251,9 +290,41 @@ fun CameraScreen(
                     }
                 }
 
-                if (state.recording) RecordTimerPill(state.recordingSeconds)
-                else if ((state.mode == CameraMode.Video || state.mode == CameraMode.SloMo) && !state.micPermissionGranted) {
-                    Row(
+                when {
+                    state.recording -> RecordTimerPill(state.recordingSeconds)
+                    state.burstCount != null -> Text(
+                        text = stringResource(R.string.camera_burst_counter, state.burstCount),
+                        color = Color.Black,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier
+                            .background(FarPalette.CameraYellow, RoundedCornerShape(14.dp))
+                            .padding(horizontal = 12.dp, vertical = 5.dp)
+                            .testTag("camera_burst_counter_pill"),
+                    )
+                    state.aeAfLocked -> Row(
+                        Modifier
+                            .minimumInteractiveComponentSize()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(FarPalette.CameraYellow.copy(alpha = 0.92f))
+                            .clickable {
+                                focusPoint = null
+                                onClearFocusLock()
+                            }
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                            .testTag("camera_ae_af_lock_pill"),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Icon(Icons.Filled.Lock, null, Modifier.size(14.dp), tint = Color.Black)
+                        Text(
+                            stringResource(R.string.camera_ae_af_locked),
+                            color = Color.Black,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                    (state.mode == CameraMode.Video || state.mode == CameraMode.SloMo) && !state.micPermissionGranted -> Row(
                         Modifier
                             .minimumInteractiveComponentSize()
                             .clip(RoundedCornerShape(16.dp))
@@ -277,7 +348,7 @@ fun CameraScreen(
 
                 CircleIcon(
                     icon = Icons.Filled.KeyboardArrowUp,
-                    desc = if (expanded) "Hide camera options" else "Show camera options",
+                    desc = stringResource(if (expanded) R.string.cd_camera_options_hide else R.string.cd_camera_options_show),
                     modifier = Modifier.rotate(if (expanded) 180f else 0f).testTag("camera_options_toggle"),
                 ) { expanded = !expanded }
             }
@@ -291,9 +362,15 @@ fun CameraScreen(
                         .padding(10.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
                         OptionChip(
-                            label = if (state.timerSeconds == 0) "Timer Off" else "${state.timerSeconds}s",
+                            label = if (state.timerSeconds == 0) stringResource(R.string.camera_timer_off)
+                            else stringResource(R.string.camera_timer_sec, state.timerSeconds),
                             active = state.timerSeconds > 0,
                             onClick = onCycleTimer,
                             icon = Icons.Filled.Timer,
@@ -306,68 +383,104 @@ fun CameraScreen(
                             },
                         )
                         OptionChip(
-                            label = "EV ${"%.1f".format(state.exposureEv)}",
+                            label = "EV ${"%+.1f".format(state.exposureEv)}",
                             active = showEvSlider || state.exposureEv != 0f,
                             onClick = { showEvSlider = !showEvSlider },
                         )
                         OptionChip(
-                            label = "Grid",
+                            label = stringResource(R.string.camera_grid),
                             active = state.gridOn,
                             onClick = onToggleGrid,
                             icon = Icons.Filled.GridOn,
                         )
                         OptionChip(
-                            label = "QR",
+                            label = stringResource(R.string.camera_level),
+                            active = state.levelEnabled,
+                            onClick = onToggleLevel,
+                            icon = Icons.Filled.ScreenRotation,
+                            modifier = Modifier.testTag("camera_level_chip"),
+                        )
+                        if (state.mode == CameraMode.Photo || state.mode == CameraMode.Square) {
+                            OptionChip(
+                                label = stringResource(R.string.camera_burst),
+                                active = state.burstMode,
+                                onClick = onToggleBurst,
+                                icon = Icons.Filled.BurstMode,
+                                modifier = Modifier.testTag("camera_burst_chip"),
+                            )
+                        }
+                        OptionChip(
+                            label = stringResource(R.string.camera_qr),
                             active = state.qrEnabled,
                             onClick = onToggleQr,
                             icon = Icons.Filled.QrCodeScanner,
                         )
                     }
                     if (showEvSlider && caps.exposureRange.endInclusive > caps.exposureRange.start) {
-                        Slider(
-                            value = state.exposureEv,
-                            onValueChange = onExposure,
-                            valueRange = caps.exposureRange,
-                            modifier = Modifier.padding(horizontal = 8.dp),
-                        )
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Slider(
+                                value = state.exposureEv,
+                                onValueChange = { next ->
+                                    if ((state.exposureEv < 0f && next >= 0f) || (state.exposureEv > 0f && next <= 0f)) {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    }
+                                    onExposure(next)
+                                },
+                                valueRange = caps.exposureRange,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("camera_ev_slider"),
+                            )
+                            if (state.exposureEv != 0f) {
+                                TextButton(
+                                    onClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        onExposure(0f)
+                                    },
+                                    modifier = Modifier.testTag("camera_ev_reset_button"),
+                                ) {
+                                    Text("0.0 EV", color = FarPalette.CameraYellow)
+                                }
+                            }
+                        }
                     }
                 }
             }
 
             state.qrResult?.let { payload ->
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp)
-                        .background(Color.Black.copy(0.75f), RoundedCornerShape(18.dp))
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(payload, color = Color.White, maxLines = 1, modifier = Modifier.weight(1f), fontSize = 13.sp)
-                    TextButton(
-                        onClick = { copyPlainTextToClipboard(ctx, "QR", payload); onDismissQr() },
-                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                    ) {
-                        Text(stringResource(R.string.action_copy), color = FarPalette.CameraYellow)
-                    }
-                    if (payload.startsWith("http://") || payload.startsWith("https://")) {
-                        TextButton(
-                            onClick = {
-                                val parsed = safeParseMediaUri(payload)
-                                if (parsed != null) {
-                                    runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, parsed)) }
-                                        .onFailure { err -> LocalDiagnostics.recordEvent(ctx, "FG-CAM-QR", "camera_qr", err.javaClass.simpleName) }
-                                }
-                                onDismissQr()
-                            },
-                            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                        ) { Text(stringResource(R.string.action_open), color = FarPalette.CameraYellow) }
-                    }
-                    TextButton(
-                        onClick = onDismissQr,
-                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                    ) { Text(stringResource(R.string.action_dismiss), color = Color.White) }
-                }
+                QrActionCard(
+                    payload = payload,
+                    onCopyText = { value ->
+                        copyPlainTextToClipboard(ctx, "QR", value)
+                        onDismissQr()
+                    },
+                    onOpenUri = { target ->
+                        val parsed = safeParseMediaUri(target)
+                        if (parsed != null) {
+                            runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, parsed)) }
+                                .onFailure { err -> LocalDiagnostics.recordEvent(ctx, "FG-CAM-QR", "camera_qr", err.javaClass.simpleName) }
+                        }
+                        onDismissQr()
+                    },
+                    onDialNumber = { number ->
+                        runCatching { ctx.startActivity(Intent(Intent.ACTION_DIAL, android.net.Uri.parse("tel:$number"))) }
+                            .onFailure { err -> LocalDiagnostics.recordEvent(ctx, "FG-CAM-QR", "camera_qr", err.javaClass.simpleName) }
+                        onDismissQr()
+                    },
+                    onSendEmail = { mailtoUri ->
+                        runCatching { ctx.startActivity(Intent(Intent.ACTION_SENDTO, android.net.Uri.parse(mailtoUri))) }
+                            .onFailure { err -> LocalDiagnostics.recordEvent(ctx, "FG-CAM-QR", "camera_qr", err.javaClass.simpleName) }
+                        onDismissQr()
+                    },
+                    onDismiss = onDismissQr,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
             }
         }
 
@@ -383,8 +496,30 @@ fun CameraScreen(
                 .navigationBarsPadding()
                 .padding(bottom = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            if (state.lastCaptureWasScan && state.lastCaptureUri != null && onEditLastScan != null) {
+                Row(
+                    Modifier
+                        .minimumInteractiveComponentSize()
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(FarPalette.CameraYellow.copy(alpha = 0.92f))
+                        .clickable { onEditLastScan(state.lastCaptureUri) }
+                        .padding(horizontal = 14.dp, vertical = 6.dp)
+                        .testTag("camera_edit_scan_pill"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Icon(Icons.Filled.CropFree, null, Modifier.size(16.dp), tint = Color.Black)
+                    Text(
+                        stringResource(R.string.camera_scan_edit),
+                        color = Color.Black,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+
             ZoomChips(caps.lensZoomStops, state.zoom) {
                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onZoom(it)
@@ -403,13 +538,14 @@ fun CameraScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                val lastDesc = stringResource(R.string.cd_open_last_capture)
                 Box(
                     Modifier
                         .size(52.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(Color.White.copy(0.15f))
                         .clickable(enabled = state.lastCaptureUri != null, onClick = onOpenLast)
-                        .semantics { contentDescription = "Open last capture" },
+                        .semantics { contentDescription = lastDesc },
                 ) { state.lastCaptureUri?.let { lastThumbnail(it) } }
 
                 Shutter(state.mode, state.recording) {
@@ -421,7 +557,7 @@ fun CameraScreen(
                 if (caps.hasFrontCamera) {
                     CircleIcon(
                         icon = Icons.Filled.FlipCameraAndroid,
-                        desc = "Switch camera",
+                        desc = stringResource(R.string.cd_switch_camera),
                         size = 52.dp,
                         modifier = Modifier.rotate(turn),
                         background = Color.White.copy(0.15f),
@@ -437,14 +573,123 @@ fun CameraScreen(
 }
 
 @Composable
+private fun QrActionCard(
+    payload: String,
+    onCopyText: (String) -> Unit,
+    onOpenUri: (String) -> Unit,
+    onDialNumber: (String) -> Unit,
+    onSendEmail: (String) -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val parsed = remember(payload) { QrParser.parse(payload) }
+    val (icon, titleRes, detail) = when (parsed) {
+        is QrPayload.Url -> Triple(Icons.Filled.Link, R.string.camera_qr_url, parsed.host)
+        is QrPayload.Wifi -> Triple(Icons.Filled.Wifi, R.string.camera_qr_wifi, "${parsed.ssid} (${parsed.security})")
+        is QrPayload.Phone -> Triple(Icons.Filled.Phone, R.string.camera_qr_phone, parsed.number)
+        is QrPayload.Email -> Triple(Icons.Filled.Email, R.string.camera_qr_email, parsed.address)
+        is QrPayload.Contact -> Triple(
+            Icons.Filled.ContactPage,
+            R.string.camera_qr_contact,
+            listOfNotNull(parsed.name, parsed.org, parsed.phone ?: parsed.email).joinToString(" · "),
+        )
+        is QrPayload.PlainText -> Triple(Icons.Filled.QrCodeScanner, R.string.camera_qr_text, parsed.raw)
+    }
+
+    Column(
+        modifier
+            .fillMaxWidth()
+            .background(Color.Black.copy(0.82f), RoundedCornerShape(20.dp))
+            .border(0.75.dp, Color.White.copy(0.22f), RoundedCornerShape(20.dp))
+            .padding(horizontal = 14.dp, vertical = 10.dp)
+            .testTag("camera_qr_action_card"),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Icon(icon, null, Modifier.size(18.dp), tint = FarPalette.CameraYellow)
+            Text(
+                stringResource(titleRes),
+                color = FarPalette.CameraYellow,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        Text(
+            detail,
+            color = Color.White,
+            fontSize = 14.sp,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            when (parsed) {
+                is QrPayload.Url -> {
+                    TextButton(onClick = { onOpenUri(parsed.raw) }, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) {
+                        Text(stringResource(R.string.action_open), color = FarPalette.CameraYellow)
+                    }
+                    TextButton(onClick = { onCopyText(parsed.raw) }, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) {
+                        Text(stringResource(R.string.action_copy), color = Color.White)
+                    }
+                }
+                is QrPayload.Wifi -> {
+                    if (parsed.password.isNotEmpty()) {
+                        TextButton(onClick = { onCopyText(parsed.password) }, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) {
+                            Text(stringResource(R.string.camera_qr_copy_password), color = FarPalette.CameraYellow)
+                        }
+                    } else {
+                        TextButton(onClick = { onCopyText(parsed.ssid) }, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) {
+                            Text(stringResource(R.string.action_copy), color = FarPalette.CameraYellow)
+                        }
+                    }
+                }
+                is QrPayload.Phone -> {
+                    TextButton(onClick = { onDialNumber(parsed.number) }, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) {
+                        Text(stringResource(R.string.camera_qr_dial), color = FarPalette.CameraYellow)
+                    }
+                    TextButton(onClick = { onCopyText(parsed.number) }, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) {
+                        Text(stringResource(R.string.action_copy), color = Color.White)
+                    }
+                }
+                is QrPayload.Email -> {
+                    TextButton(onClick = { onSendEmail(parsed.raw) }, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) {
+                        Text(stringResource(R.string.camera_qr_email_action), color = FarPalette.CameraYellow)
+                    }
+                    TextButton(onClick = { onCopyText(parsed.address) }, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) {
+                        Text(stringResource(R.string.action_copy), color = Color.White)
+                    }
+                }
+                is QrPayload.Contact -> {
+                    TextButton(onClick = { onCopyText(detail) }, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) {
+                        Text(stringResource(R.string.action_copy), color = FarPalette.CameraYellow)
+                    }
+                }
+                is QrPayload.PlainText -> {
+                    TextButton(onClick = { onCopyText(parsed.raw) }, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) {
+                        Text(stringResource(R.string.action_copy), color = FarPalette.CameraYellow)
+                    }
+                }
+            }
+            TextButton(onClick = onDismiss, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) {
+                Text(stringResource(R.string.action_dismiss), color = Color.White.copy(alpha = 0.8f))
+            }
+        }
+    }
+}
+
+@Composable
 private fun OptionChip(
     label: String,
     active: Boolean,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
     icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
 ) {
     Row(
-        Modifier
+        modifier
             .minimumInteractiveComponentSize()
             .clip(RoundedCornerShape(16.dp))
             .background(if (active) FarPalette.CameraYellow.copy(0.24f) else Color.Transparent)
@@ -529,7 +774,7 @@ private fun trim(v: Float) = if (v % 1f == 0f) v.toInt().toString() else "%.1f".
 
 @Composable
 private fun ModeCarousel(modes: List<CameraMode>, current: CameraMode, onPick: (CameraMode) -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         modes.forEach { m ->
             val c by animateColorAsState(if (m == current) FarPalette.CameraYellow else Color.White, label = "mode")
             Box(
@@ -542,7 +787,7 @@ private fun ModeCarousel(modes: List<CameraMode>, current: CameraMode, onPick: (
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    m.label,
+                    stringResource(m.labelRes),
                     color = c,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -560,6 +805,13 @@ private fun Shutter(mode: CameraMode, recording: Boolean, onClick: () -> Unit) {
     val innerColor by animateColorAsState(if (isVideo) FarPalette.RecordRed else Color.White, label = "inner")
     val innerSize by animateDpAsState(if (recording) 30.dp else 60.dp, label = "innerSize")
     val corner by animateDpAsState(if (recording) 8.dp else 30.dp, label = "corner")
+    val desc = stringResource(
+        when {
+            isVideo && recording -> R.string.cd_stop_recording
+            isVideo -> R.string.cd_start_recording
+            else -> R.string.cd_take_photo
+        }
+    )
     Box(
         Modifier
             .size(76.dp)
@@ -573,7 +825,7 @@ private fun Shutter(mode: CameraMode, recording: Boolean, onClick: () -> Unit) {
             }
             .semantics {
                 role = Role.Button
-                contentDescription = if (isVideo) (if (recording) "Stop recording" else "Start recording") else "Take photo"
+                contentDescription = desc
             },
         contentAlignment = Alignment.Center,
     ) {
@@ -616,18 +868,25 @@ private fun CircleIcon(
     }
 }
 
-/** Yellow focus square + vertical exposure drag that fades after 1.5s. */
+/** Yellow focus square + EV numeric badge + vertical exposure drag. */
 @Composable
 private fun FocusIndicator(
     point: Offset?,
     ev: Float,
+    locked: Boolean,
     range: ClosedFloatingPointRange<Float>,
     onEv: (Float) -> Unit,
     onGone: () -> Unit,
 ) {
     if (point == null) return
     val s = remember(point) { Animatable(1.4f) }
-    LaunchedEffect(point) { s.animateTo(1f); delay(1800); onGone() }
+    LaunchedEffect(point, locked) {
+        s.animateTo(1f)
+        if (!locked) {
+            delay(1800)
+            onGone()
+        }
+    }
     val density = LocalDensity.current
     val half = with(density) { 36.dp.toPx() }
     val top = with(density) { 96.dp.toPx() }
@@ -645,7 +904,20 @@ private fun FocusIndicator(
             }
     ) {
         Canvas(Modifier.fillMaxSize().scale(s.value)) {
-            drawRect(FarPalette.CameraYellow, style = Stroke(2.dp.toPx()))
+            drawRect(FarPalette.CameraYellow, style = Stroke(if (locked) 3.dp.toPx() else 2.dp.toPx()))
+        }
+        if (ev != 0f || locked) {
+            Text(
+                text = if (locked) stringResource(R.string.camera_ae_af_locked) else "%+.1f EV".format(ev),
+                color = Color.Black,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .offset(y = 18.dp)
+                    .background(FarPalette.CameraYellow, RoundedCornerShape(6.dp))
+                    .padding(horizontal = 5.dp, vertical = 1.dp),
+            )
         }
     }
 }

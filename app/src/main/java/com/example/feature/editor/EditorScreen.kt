@@ -9,15 +9,22 @@ import android.graphics.ColorMatrixColorFilter
 import android.graphics.ImageDecoder
 import android.graphics.Matrix
 import android.graphics.Paint
+import android.graphics.RadialGradient
+import android.graphics.Shader
+import android.media.ExifInterface
 import android.net.Uri
 import android.provider.MediaStore
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
@@ -26,6 +33,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -49,19 +57,24 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import android.media.ExifInterface
 import com.example.R
 import com.example.core.common.FarResult
 import com.example.core.common.farCatching
@@ -77,26 +90,34 @@ import com.example.ui.glass.glass
 import com.example.ui.theme.FarSpacing
 import com.example.ui.theme.LocalHapticsEnabled
 import com.example.ui.theme.LocalSemanticColors
-import dev.chrisbanes.haze.HazeState
+import com.example.ui.glass.FarGlassState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.hypot
 import kotlin.math.max
+import kotlin.math.roundToInt
+import kotlin.math.sin
 
 enum class FilterPreset(
-    val label: String,
+    val labelRes: Int,
     val brightness: Float,
     val contrast: Float,
     val saturation: Float,
     val warmth: Float,
+    val vignette: Float = 0f,
 ) {
-    Original("Original", 0f, 0f, 0f, 0f),
-    Vivid("Vivid", 0.05f, 0.16f, 0.34f, 0.04f),
-    WarmFilm("Warm Film", 0.04f, 0.08f, -0.08f, 0.28f),
-    Matte("Matte", 0.08f, -0.18f, -0.14f, 0.06f),
-    CoolCrisp("Cool Crisp", 0.02f, 0.18f, 0.10f, -0.24f),
-    Noir("Noir B&W", 0f, 0.28f, -1f, 0f),
+    Original(R.string.editor_preset_original, 0f, 0f, 0f, 0f, 0f),
+    Vivid(R.string.editor_preset_vivid, 0.05f, 0.16f, 0.34f, 0.04f, 0f),
+    WarmFilm(R.string.editor_preset_warm_film, 0.04f, 0.08f, -0.08f, 0.28f, 0.14f),
+    Matte(R.string.editor_preset_matte, 0.08f, -0.18f, -0.14f, 0.06f, 0.10f),
+    CoolCrisp(R.string.editor_preset_cool_crisp, 0.02f, 0.18f, 0.10f, -0.24f, 0f),
+    Noir(R.string.editor_preset_noir, 0f, 0.28f, -1f, 0f, 0.24f),
+    DocumentScan(R.string.editor_preset_doc_scan, 0.08f, 0.42f, -0.88f, -0.06f, 0f),
+    GoldenHour(R.string.editor_preset_golden_hour, 0.05f, 0.14f, 0.22f, 0.34f, 0.18f),
 }
 
 /** One immutable snapshot per undo step. Replaying it on the source bitmap is the whole edit model (non-destructive). */
@@ -106,19 +127,34 @@ data class EditState(
     val contrast: Float = 0f,
     val saturation: Float = 0f,
     val warmth: Float = 0f,
+    val vignette: Float = 0f,
     val rotationQuarter: Int = 0,
     val flipH: Boolean = false,
+    val straightenDeg: Float = 0f,
     val cropRatio: Float? = null,
+    val cropLeft: Float = 0f,
+    val cropTop: Float = 0f,
+    val cropRight: Float = 1f,
+    val cropBottom: Float = 1f,
     val preset: String = FilterPreset.Original.name,
 ) {
+    fun hasCustomCrop(): Boolean =
+        cropLeft > 0.005f || cropTop > 0.005f || cropRight < 0.995f || cropBottom < 0.995f
+
     fun toJson(): String = JSONObject().apply {
         put("b", brightness.toDouble())
         put("c", contrast.toDouble())
         put("s", saturation.toDouble())
         put("w", warmth.toDouble())
+        put("v", vignette.toDouble())
         put("r", rotationQuarter)
         put("f", flipH)
+        put("sd", straightenDeg.toDouble())
         if (cropRatio != null) put("crop", cropRatio.toDouble()) else put("crop", JSONObject.NULL)
+        put("cl", cropLeft.toDouble())
+        put("ct", cropTop.toDouble())
+        put("cr", cropRight.toDouble())
+        put("cb", cropBottom.toDouble())
         put("preset", preset)
     }.toString()
 
@@ -127,14 +163,24 @@ data class EditState(
             if (json.isNullOrBlank()) return null
             return runCatching {
                 val obj = JSONObject(json)
+                val cl = obj.optDouble("cl", 0.0).toFloat().coerceIn(0f, 0.9f)
+                val ct = obj.optDouble("ct", 0.0).toFloat().coerceIn(0f, 0.9f)
+                val cr = obj.optDouble("cr", 1.0).toFloat().coerceIn((cl + 0.1f).coerceAtMost(1f), 1f)
+                val cb = obj.optDouble("cb", 1.0).toFloat().coerceIn((ct + 0.1f).coerceAtMost(1f), 1f)
                 EditState(
                     brightness = obj.optDouble("b", 0.0).toFloat().coerceIn(-1f, 1f),
                     contrast = obj.optDouble("c", 0.0).toFloat().coerceIn(-1f, 1f),
                     saturation = obj.optDouble("s", 0.0).toFloat().coerceIn(-1f, 1f),
                     warmth = obj.optDouble("w", 0.0).toFloat().coerceIn(-1f, 1f),
+                    vignette = obj.optDouble("v", 0.0).toFloat().coerceIn(0f, 1f),
                     rotationQuarter = obj.optInt("r", 0).mod(4),
                     flipH = obj.optBoolean("f", false),
+                    straightenDeg = obj.optDouble("sd", 0.0).toFloat().coerceIn(-45f, 45f),
                     cropRatio = if (obj.isNull("crop")) null else obj.optDouble("crop").toFloat(),
+                    cropLeft = cl,
+                    cropTop = ct,
+                    cropRight = cr,
+                    cropBottom = cb,
                     preset = obj.optString("preset", FilterPreset.Original.name),
                 )
             }.getOrNull()
@@ -236,34 +282,120 @@ object EditorEngine {
         }
     }
 
-    fun render(src: Bitmap, s: EditState): Bitmap {
+    fun straightenScale(w: Int, h: Int, deg: Float): Float {
+        if (abs(deg) <= 0.05f || w <= 0 || h <= 0) return 1f
+        val rad = Math.toRadians(abs(deg).toDouble())
+        val cosA = abs(cos(rad)).toFloat()
+        val sinA = abs(sin(rad)).toFloat()
+        val sx = cosA + (h.toFloat() / w.toFloat()) * sinA
+        val sy = cosA + (w.toFloat() / h.toFloat()) * sinA
+        return max(sx, sy).coerceAtLeast(1f)
+    }
+
+    fun renderGeometryOnly(src: Bitmap, s: EditState, applyCrop: Boolean = true): Bitmap {
         val m = Matrix().apply {
             postRotate(90f * s.rotationQuarter)
             if (s.flipH) postScale(-1f, 1f)
         }
         var out = Bitmap.createBitmap(src, 0, 0, src.width, src.height, m, true)
-        s.cropRatio?.let { r ->
+        if (abs(s.straightenDeg) > 0.05f) {
             val w = out.width
             val h = out.height
-            val cw: Int
-            val ch: Int
-            if (w.toFloat() / h > r) {
-                ch = h
-                cw = (h * r).toInt().coerceAtLeast(1)
-            } else {
-                cw = w
-                ch = (w / r).toInt().coerceAtLeast(1)
+            val scale = straightenScale(w, h, s.straightenDeg)
+            val straightened = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            val sm = Matrix().apply {
+                postTranslate(-w / 2f, -h / 2f)
+                postRotate(s.straightenDeg)
+                postScale(scale, scale)
+                postTranslate(w / 2f, h / 2f)
             }
-            out = Bitmap.createBitmap(out, ((w - cw) / 2).coerceAtLeast(0), ((h - ch) / 2).coerceAtLeast(0), cw, ch)
+            Canvas(straightened).drawBitmap(out, sm, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+            if (out !== src) out.recycle()
+            out = straightened
         }
+        if (applyCrop) {
+            if (s.hasCustomCrop()) {
+                val w = out.width
+                val h = out.height
+                val leftPx = (s.cropLeft.coerceIn(0f, 0.9f) * w).roundToInt().coerceIn(0, (w - 1).coerceAtLeast(0))
+                val topPx = (s.cropTop.coerceIn(0f, 0.9f) * h).roundToInt().coerceIn(0, (h - 1).coerceAtLeast(0))
+                val rightPx = (s.cropRight.coerceIn(s.cropLeft + 0.1f, 1f) * w).roundToInt().coerceIn(leftPx + 1, w)
+                val bottomPx = (s.cropBottom.coerceIn(s.cropTop + 0.1f, 1f) * h).roundToInt().coerceIn(topPx + 1, h)
+                val cropped = Bitmap.createBitmap(out, leftPx, topPx, (rightPx - leftPx).coerceAtLeast(1), (bottomPx - topPx).coerceAtLeast(1))
+                if (out !== src) out.recycle()
+                out = cropped
+            } else {
+                s.cropRatio?.let { r ->
+                    val w = out.width
+                    val h = out.height
+                    val cw: Int
+                    val ch: Int
+                    if (w.toFloat() / h > r) {
+                        ch = h
+                        cw = (h * r).toInt().coerceAtLeast(1)
+                    } else {
+                        cw = w
+                        ch = (w / r).toInt().coerceAtLeast(1)
+                    }
+                    val cropped = Bitmap.createBitmap(out, ((w - cw) / 2).coerceAtLeast(0), ((h - ch) / 2).coerceAtLeast(0), cw, ch)
+                    if (out !== src) out.recycle()
+                    out = cropped
+                }
+            }
+        }
+        return out
+    }
+
+    fun render(src: Bitmap, s: EditState): Bitmap {
+        val out = renderGeometryOnly(src, s, applyCrop = true)
         val result = Bitmap.createBitmap(out.width, out.height, Bitmap.Config.ARGB_8888)
-        Canvas(result).drawBitmap(
+        val canvas = Canvas(result)
+        canvas.drawBitmap(
             out,
             0f,
             0f,
             Paint().apply { colorFilter = ColorMatrixColorFilter(AColorMatrix(s.matrixValues())) },
         )
+        if (out !== src && out !== result) out.recycle()
+        if (s.vignette > 0.01f) {
+            val radius = max(result.width, result.height) * 0.72f
+            val edgeAlpha = (s.vignette.coerceIn(0f, 1f) * 185).toInt()
+            val edgeColor = android.graphics.Color.argb(edgeAlpha, 0, 0, 0)
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                shader = RadialGradient(
+                    result.width / 2f,
+                    result.height / 2f,
+                    radius.coerceAtLeast(1f),
+                    intArrayOf(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT, edgeColor),
+                    floatArrayOf(0f, 0.45f, 1f),
+                    Shader.TileMode.CLAMP,
+                )
+            }
+            canvas.drawRect(0f, 0f, result.width.toFloat(), result.height.toFloat(), paint)
+        }
         return result
+    }
+
+    fun buildPresetThumbnails(src: Bitmap, thumbSizePx: Int = 72): Map<FilterPreset, ImageBitmap> {
+        val ratio = thumbSizePx.toFloat() / max(src.width, src.height).coerceAtLeast(1)
+        val w = (src.width * ratio).toInt().coerceAtLeast(1)
+        val h = (src.height * ratio).toInt().coerceAtLeast(1)
+        val mini = Bitmap.createScaledBitmap(src, w, h, true)
+        return try {
+            FilterPreset.entries.associateWith { preset ->
+                val state = EditState(
+                    brightness = preset.brightness,
+                    contrast = preset.contrast,
+                    saturation = preset.saturation,
+                    warmth = preset.warmth,
+                    vignette = preset.vignette,
+                    preset = preset.name,
+                )
+                render(mini, state).asImageBitmap()
+            }
+        } finally {
+            mini.recycle()
+        }
     }
 
     /** Save a high-res COPY to Pictures/Far Gallery. Never touches the original; strips GPS/EXIF by default. */
@@ -323,20 +455,28 @@ object EditorEngine {
     }
 }
 
-enum class EditTab(val label: String) { Adjust("Adjust"), Presets("Presets"), Crop("Crop"), Rotate("Rotate") }
+enum class EditTab(val labelRes: Int) {
+    Adjust(R.string.editor_tab_adjust),
+    Presets(R.string.editor_tab_presets),
+    Crop(R.string.editor_tab_crop),
+    Rotate(R.string.editor_tab_rotate),
+}
 
 @Composable
 fun EditorScreen(
     source: Bitmap?,
     loading: Boolean,
     errorText: String?,
-    glass: HazeState,
+    glass: FarGlassState,
     saving: Boolean,
     onCancel: () -> Unit,
     onSave: (EditState, Boolean) -> Unit,
     initialState: EditState? = null,
     stripExifDefault: Boolean = true,
     onRetry: (() -> Unit)? = null,
+    copiedRecipe: EditState? = null,
+    onCopyRecipe: ((EditState) -> Unit)? = null,
+    onPasteRecipe: (() -> EditState?)? = null,
     modifier: Modifier = Modifier,
 ) {
     val history = remember(initialState) { EditHistory(initialState ?: EditState()) }
@@ -346,10 +486,21 @@ fun EditorScreen(
     var stripExif by remember(stripExifDefault) { mutableStateOf(stripExifDefault) }
     var showHistogram by remember { mutableStateOf(false) }
     var histogram by remember { mutableStateOf<HistogramData?>(null) }
+    var presetThumbs by remember(source) { mutableStateOf<Map<FilterPreset, ImageBitmap>>(emptyMap()) }
     val haptic = LocalHapticFeedback.current
     val hapticsOn = LocalHapticsEnabled.current
     val s = history.current
     val dirty = s != EditState()
+
+    LaunchedEffect(source) {
+        if (source != null) {
+            presetThumbs = withContext(Dispatchers.Default) {
+                runCatching { EditorEngine.buildPresetThumbnails(source, 72) }.getOrDefault(emptyMap())
+            }
+        } else {
+            presetThumbs = emptyMap()
+        }
+    }
 
     LaunchedEffect(source, s, comparing, showHistogram) {
         if (showHistogram && source != null) {
@@ -383,36 +534,92 @@ fun EditorScreen(
             )
             source != null -> {
                 val active = if (comparing) EditState() else s
-                val cropMod = if (active.cropRatio != null) {
-                    Modifier.aspectRatio(active.cropRatio).clip(RoundedCornerShape(4.dp))
-                } else {
-                    Modifier.fillMaxSize()
+                val applyCropNow = tab != EditTab.Crop && !comparing
+                val displayBitmap = remember(
+                    source,
+                    active.rotationQuarter,
+                    active.flipH,
+                    active.straightenDeg,
+                    active.cropRatio,
+                    active.cropLeft,
+                    active.cropTop,
+                    active.cropRight,
+                    active.cropBottom,
+                    applyCropNow,
+                ) {
+                    EditorEngine.renderGeometryOnly(source, active, applyCrop = applyCropNow)
                 }
-                Box(
+                val aspect = (displayBitmap.width.toFloat() / displayBitmap.height.coerceAtLeast(1).toFloat()).coerceIn(0.25f, 4f)
+                BoxWithConstraints(
                     Modifier
                         .fillMaxSize()
-                        .padding(top = 96.dp, bottom = 248.dp)
-                        .pointerInput(Unit) {
+                        .padding(top = 96.dp, bottom = 286.dp)
+                        .pointerInput(tab) {
                             detectTapGestures(
                                 onPress = {
-                                    comparing = true
-                                    tryAwaitRelease()
-                                    comparing = false
+                                    if (tab != EditTab.Crop) {
+                                        comparing = true
+                                        tryAwaitRelease()
+                                        comparing = false
+                                    }
                                 }
                             )
                         },
                     contentAlignment = Alignment.Center,
                 ) {
-                    Image(
-                        bitmap = source.asImageBitmap(),
-                        contentDescription = if (comparing) "Original photo" else "Edited photo",
-                        contentScale = if (active.cropRatio != null) ContentScale.Crop else ContentScale.Fit,
-                        colorFilter = ColorFilter.colorMatrix(ColorMatrix(active.matrixValues())),
-                        modifier = cropMod.graphicsLayer {
-                            rotationZ = 90f * active.rotationQuarter
-                            scaleX = if (active.flipH) -1f else 1f
-                        },
-                    )
+                    val fitHeightFirst = maxWidth / maxHeight.coerceAtLeast(1.dp) > aspect
+                    Box(
+                        Modifier
+                            .fillMaxSize(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            Modifier
+                                .aspectRatio(aspect, matchHeightConstraintsFirst = fitHeightFirst)
+                        ) {
+                            Image(
+                                bitmap = displayBitmap.asImageBitmap(),
+                                contentDescription = if (comparing) "Original photo" else "Edited photo",
+                                contentScale = ContentScale.Fit,
+                                colorFilter = ColorFilter.colorMatrix(ColorMatrix(active.matrixValues())),
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .drawWithContent {
+                                        drawContent()
+                                        if (active.vignette > 0.01f) {
+                                            val radius = max(size.width, size.height) * 0.72f
+                                            drawRect(
+                                                brush = Brush.radialGradient(
+                                                    0f to Color.Transparent,
+                                                    0.45f to Color.Transparent,
+                                                    1f to Color.Black.copy(alpha = (active.vignette * 0.72f).coerceIn(0f, 0.75f)),
+                                                    radius = radius.coerceAtLeast(1f),
+                                                )
+                                            )
+                                        }
+                                    },
+                            )
+                            if (tab == EditTab.Crop && !comparing) {
+                                CropHandlesOverlay(
+                                    left = s.cropLeft,
+                                    top = s.cropTop,
+                                    right = s.cropRight,
+                                    bottom = s.cropBottom,
+                                    onCommitCrop = { l, t, r, b ->
+                                        history.commit(
+                                            s.copy(
+                                                cropRatio = null,
+                                                cropLeft = l,
+                                                cropTop = t,
+                                                cropRight = r,
+                                                cropBottom = b,
+                                            )
+                                        )
+                                    },
+                                )
+                            }
+                        }
+                    }
                     if (comparing) {
                         Text(
                             "ORIGINAL",
@@ -513,116 +720,239 @@ fun EditorScreen(
             ) {
                 when (tab) {
                     EditTab.Adjust -> {
-                        AdjustSlider("Brightness", s.brightness) { history.commit(s.copy(brightness = it)) }
-                        AdjustSlider("Contrast", s.contrast) { history.commit(s.copy(contrast = it)) }
-                        AdjustSlider("Saturation", s.saturation) { history.commit(s.copy(saturation = it)) }
-                        AdjustSlider("Warmth", s.warmth) { history.commit(s.copy(warmth = it)) }
-                    }
-                    EditTab.Presets -> LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(FilterPreset.entries) { p ->
-                            val active = s.preset == p.name
-                            FarFilterPill(
-                                label = p.label,
-                                selected = active,
-                                onClick = {
-                                    if (hapticsOn) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    history.commit(
-                                        s.copy(
-                                            brightness = p.brightness,
-                                            contrast = p.contrast,
-                                            saturation = p.saturation,
-                                            warmth = p.warmth,
-                                            preset = p.name,
-                                        )
-                                    )
-                                },
-                                modifier = Modifier.testTag("preset_${p.name.lowercase()}"),
-                            )
+                        AdjustSlider(stringResource(R.string.editor_brightness), s.brightness) {
+                            history.commit(s.copy(brightness = it))
+                        }
+                        AdjustSlider(stringResource(R.string.editor_contrast), s.contrast) {
+                            history.commit(s.copy(contrast = it))
+                        }
+                        AdjustSlider(stringResource(R.string.editor_saturation), s.saturation) {
+                            history.commit(s.copy(saturation = it))
+                        }
+                        AdjustSlider(stringResource(R.string.editor_warmth), s.warmth) {
+                            history.commit(s.copy(warmth = it))
+                        }
+                        AdjustSlider(
+                            label = stringResource(R.string.editor_vignette),
+                            value = s.vignette,
+                            range = 0f..1f,
+                        ) {
+                            history.commit(s.copy(vignette = it))
                         }
                     }
-                    EditTab.Crop -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                        listOf("Original" to null, "1:1" to 1f, "4:3" to 4f / 3f, "3:2" to 1.5f, "16:9" to 16f / 9f).forEach { (l, r) ->
-                            TextButton(
-                                onClick = {
-                                    if (hapticsOn) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    history.commit(s.copy(cropRatio = r))
-                                },
-                                modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                    EditTab.Presets -> LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        items(FilterPreset.entries) { p ->
+                            val active = s.preset == p.name
+                            val thumb = presetThumbs[p]
+                            Column(
+                                Modifier
+                                    .defaultMinSize(minWidth = 64.dp, minHeight = 48.dp)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else Color.Transparent)
+                                    .border(
+                                        width = if (active) 1.5.dp else 0.75.dp,
+                                        color = if (active) MaterialTheme.colorScheme.primary else semantic.cardBorder,
+                                        shape = RoundedCornerShape(14.dp),
+                                    )
+                                    .clickable {
+                                        if (hapticsOn) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        history.commit(
+                                            s.copy(
+                                                brightness = p.brightness,
+                                                contrast = p.contrast,
+                                                saturation = p.saturation,
+                                                warmth = p.warmth,
+                                                vignette = p.vignette,
+                                                preset = p.name,
+                                            )
+                                        )
+                                    }
+                                    .padding(6.dp)
+                                    .testTag("preset_${p.name.lowercase()}"),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
                             ) {
-                                Text(l, color = if (s.cropRatio == r) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                                if (thumb != null) {
+                                    Image(
+                                        bitmap = thumb,
+                                        contentDescription = null,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier
+                                            .size(56.dp)
+                                            .clip(RoundedCornerShape(10.dp)),
+                                    )
+                                }
+                                Text(
+                                    text = stringResource(p.labelRes),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
                             }
                         }
                     }
-                    EditTab.Rotate -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                        TextButton(
-                            onClick = {
-                                if (hapticsOn) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                history.commit(s.copy(rotationQuarter = (s.rotationQuarter + 3) % 4))
-                            },
-                            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                        ) { Text("Rotate left", color = MaterialTheme.colorScheme.onSurface) }
-                        TextButton(
-                            onClick = {
-                                if (hapticsOn) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                history.commit(s.copy(rotationQuarter = (s.rotationQuarter + 1) % 4))
-                            },
-                            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                        ) { Text("Rotate right", color = MaterialTheme.colorScheme.onSurface) }
-                        TextButton(
-                            onClick = {
-                                if (hapticsOn) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                history.commit(s.copy(flipH = !s.flipH))
-                            },
-                            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                        ) { Text("Flip", color = MaterialTheme.colorScheme.onSurface) }
+                    EditTab.Crop -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        LazyRow(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            val ratios = listOf(
+                                null to R.string.editor_preset_original,
+                                1f to null,
+                                (4f / 3f) to null,
+                                1.5f to null,
+                                (16f / 9f) to null,
+                            )
+                            val labels = listOf(null, "1:1", "4:3", "3:2", "16:9")
+                            items(ratios.size) { idx ->
+                                val (r, res) = ratios[idx]
+                                val label = if (res != null) stringResource(res) else labels[idx]!!
+                                TextButton(
+                                    onClick = {
+                                        if (hapticsOn) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        if (r == null) {
+                                            history.commit(s.copy(cropRatio = null, cropLeft = 0f, cropTop = 0f, cropRight = 1f, cropBottom = 1f))
+                                        } else {
+                                            // Compute centered normalized crop box matching ratio r relative to oriented source
+                                            val orientedW = if (s.rotationQuarter % 2 == 1) (source?.height ?: 1) else (source?.width ?: 1)
+                                            val orientedH = if (s.rotationQuarter % 2 == 1) (source?.width ?: 1) else (source?.height ?: 1)
+                                            val imgAspect = orientedW.toFloat() / orientedH.coerceAtLeast(1).toFloat()
+                                            val (nw, nh) = if (imgAspect > r) {
+                                                (r / imgAspect).coerceIn(0.1f, 1f) to 1f
+                                            } else {
+                                                1f to (imgAspect / r).coerceIn(0.1f, 1f)
+                                            }
+                                            val dx = (1f - nw) / 2f
+                                            val dy = (1f - nh) / 2f
+                                            history.commit(
+                                                s.copy(
+                                                    cropRatio = r,
+                                                    cropLeft = dx,
+                                                    cropTop = dy,
+                                                    cropRight = 1f - dx,
+                                                    cropBottom = 1f - dy,
+                                                )
+                                            )
+                                        }
+                                    },
+                                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                                ) {
+                                    Text(label, color = if (s.cropRatio == r) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                                }
+                            }
+                        }
+                    }
+                    EditTab.Rotate -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        AdjustSlider(
+                            label = "${stringResource(R.string.editor_straighten)} ${"%+.1f°".format(s.straightenDeg)}",
+                            value = s.straightenDeg,
+                            range = -45f..45f,
+                        ) {
+                            history.commit(s.copy(straightenDeg = it))
+                        }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                            TextButton(
+                                onClick = {
+                                    if (hapticsOn) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    history.commit(s.copy(rotationQuarter = (s.rotationQuarter + 3) % 4))
+                                },
+                                modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                            ) { Text(stringResource(R.string.editor_rotate_left), color = MaterialTheme.colorScheme.onSurface) }
+                            TextButton(
+                                onClick = {
+                                    if (hapticsOn) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    history.commit(s.copy(rotationQuarter = (s.rotationQuarter + 1) % 4))
+                                },
+                                modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                            ) { Text(stringResource(R.string.editor_rotate_right), color = MaterialTheme.colorScheme.onSurface) }
+                            TextButton(
+                                onClick = {
+                                    if (hapticsOn) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    history.commit(s.copy(flipH = !s.flipH))
+                                },
+                                modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                            ) { Text(stringResource(R.string.editor_flip), color = MaterialTheme.colorScheme.onSurface) }
+                            if (abs(s.straightenDeg) > 0.05f) {
+                                TextButton(
+                                    onClick = { history.commit(s.copy(straightenDeg = 0f)) },
+                                    modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("editor_reset_straighten"),
+                                ) { Text("0°", color = MaterialTheme.colorScheme.primary) }
+                            }
+                        }
                     }
                 }
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    stringResource(R.string.editor_hold_compare),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 1,
-                )
-                FarFilterPill(
-                    label = stringResource(R.string.viewer_histogram),
-                    selected = showHistogram,
-                    onClick = { showHistogram = !showHistogram },
-                    modifier = Modifier.testTag("editor_histogram_chip"),
-                )
-                FarFilterPill(
-                    label = if (stripExif) "Strip EXIF: On" else "EXIF: Off",
-                    selected = stripExif,
-                    onClick = { stripExif = !stripExif },
-                    modifier = Modifier.testTag("editor_strip_exif_chip"),
-                )
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                EditTab.entries.forEach { t ->
-                    TextButton(
-                        onClick = { tab = t },
-                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                    ) {
-                        Text(t.label, color = if (t == tab) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                LazyRow(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (dirty && onCopyRecipe != null) {
+                        item(key = "copy_recipe") {
+                            FarFilterPill(
+                                label = stringResource(R.string.editor_copy_edits),
+                                selected = false,
+                                onClick = { onCopyRecipe(s) },
+                                modifier = Modifier.testTag("editor_copy_recipe_chip"),
+                            )
+                        }
+                    }
+                    if (copiedRecipe != null && onPasteRecipe != null) {
+                        item(key = "paste_recipe") {
+                            FarFilterPill(
+                                label = stringResource(R.string.editor_paste_edits),
+                                selected = true,
+                                onClick = {
+                                    onPasteRecipe()?.let { pasted ->
+                                        if (hapticsOn) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        history.commit(pasted)
+                                    }
+                                },
+                                modifier = Modifier.testTag("editor_paste_recipe_chip"),
+                            )
+                        }
+                    }
+                    item(key = "histogram_toggle") {
+                        FarFilterPill(
+                            label = stringResource(R.string.viewer_histogram),
+                            selected = showHistogram,
+                            onClick = { showHistogram = !showHistogram },
+                            modifier = Modifier.testTag("editor_histogram_chip"),
+                        )
+                    }
+                    item(key = "strip_exif_toggle") {
+                        FarFilterPill(
+                            label = stringResource(if (stripExif) R.string.editor_strip_exif_on else R.string.editor_strip_exif_off),
+                            selected = stripExif,
+                            onClick = { stripExif = !stripExif },
+                            modifier = Modifier.testTag("editor_strip_exif_chip"),
+                        )
                     }
                 }
-                if (dirty) {
-                    TextButton(
-                        onClick = {
-                            if (hapticsOn) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            history.reset()
-                        },
-                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                    ) { Text(stringResource(R.string.editor_reset), color = MaterialTheme.colorScheme.error) }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    EditTab.entries.forEach { t ->
+                        TextButton(
+                            onClick = { tab = t },
+                            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                        ) {
+                            Text(
+                                stringResource(t.labelRes),
+                                color = if (t == tab) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                    }
+                    if (dirty) {
+                        TextButton(
+                            onClick = {
+                                if (hapticsOn) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                history.reset()
+                            },
+                            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                        ) { Text(stringResource(R.string.editor_reset), color = MaterialTheme.colorScheme.error) }
+                    }
                 }
             }
         }
-    }
     }
 
     if (confirmDiscard) {
@@ -647,7 +977,121 @@ fun EditorScreen(
 }
 
 @Composable
-private fun AdjustSlider(label: String, value: Float, onCommit: (Float) -> Unit) {
+private fun CropHandlesOverlay(
+    left: Float,
+    top: Float,
+    right: Float,
+    bottom: Float,
+    onCommitCrop: (Float, Float, Float, Float) -> Unit,
+) {
+    var l by remember(left, top, right, bottom) { mutableFloatStateOf(left) }
+    var t by remember(left, top, right, bottom) { mutableFloatStateOf(top) }
+    var r by remember(left, top, right, bottom) { mutableFloatStateOf(right) }
+    var b by remember(left, top, right, bottom) { mutableFloatStateOf(bottom) }
+    var activeCorner by remember { mutableStateOf<Int?>(null) } // 0=TL,1=TR,2=BL,3=BR
+    val minSpan = 0.15f
+
+    Canvas(
+        Modifier
+            .fillMaxSize()
+            .testTag("editor_crop_overlay")
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragStart = { start ->
+                        val w = size.width.toFloat().coerceAtLeast(1f)
+                        val h = size.height.toFloat().coerceAtLeast(1f)
+                        val corners = listOf(
+                            Offset(l * w, t * h),
+                            Offset(r * w, t * h),
+                            Offset(l * w, b * h),
+                            Offset(r * w, b * h),
+                        )
+                        activeCorner = corners.indices.minByOrNull { idx ->
+                            hypot((corners[idx].x - start.x).toDouble(), (corners[idx].y - start.y).toDouble())
+                        }
+                    },
+                    onDrag = { change, drag ->
+                        change.consume()
+                        val w = size.width.toFloat().coerceAtLeast(1f)
+                        val h = size.height.toFloat().coerceAtLeast(1f)
+                        val dx = drag.x / w
+                        val dy = drag.y / h
+                        when (activeCorner) {
+                            0 -> {
+                                l = (l + dx).coerceIn(0f, r - minSpan)
+                                t = (t + dy).coerceIn(0f, b - minSpan)
+                            }
+                            1 -> {
+                                r = (r + dx).coerceIn(l + minSpan, 1f)
+                                t = (t + dy).coerceIn(0f, b - minSpan)
+                            }
+                            2 -> {
+                                l = (l + dx).coerceIn(0f, r - minSpan)
+                                b = (b + dy).coerceIn(t + minSpan, 1f)
+                            }
+                            3 -> {
+                                r = (r + dx).coerceIn(l + minSpan, 1f)
+                                b = (b + dy).coerceIn(t + minSpan, 1f)
+                            }
+                        }
+                    },
+                    onDragEnd = {
+                        activeCorner = null
+                        onCommitCrop(l, t, r, b)
+                    },
+                    onDragCancel = {
+                        activeCorner = null
+                    },
+                )
+            }
+    ) {
+        val x1 = l * size.width
+        val y1 = t * size.height
+        val x2 = r * size.width
+        val y2 = b * size.height
+        val bw = (x2 - x1).coerceAtLeast(1f)
+        val bh = (y2 - y1).coerceAtLeast(1f)
+        val shade = Color.Black.copy(alpha = 0.52f)
+
+        // Outer dimmed frame
+        if (y1 > 0f) drawRect(shade, Offset.Zero, Size(size.width, y1))
+        if (y2 < size.height) drawRect(shade, Offset(0f, y2), Size(size.width, size.height - y2))
+        if (x1 > 0f) drawRect(shade, Offset(0f, y1), Size(x1, bh))
+        if (x2 < size.width) drawRect(shade, Offset(x2, y1), Size(size.width - x2, bh))
+
+        // Border & rule-of-thirds
+        drawRect(Color.White, Offset(x1, y1), Size(bw, bh), style = Stroke(width = 2.dp.toPx()))
+        val gridPaint = Color.White.copy(alpha = 0.45f)
+        drawLine(gridPaint, Offset(x1 + bw / 3f, y1), Offset(x1 + bw / 3f, y2), 1.dp.toPx())
+        drawLine(gridPaint, Offset(x1 + 2f * bw / 3f, y1), Offset(x1 + 2f * bw / 3f, y2), 1.dp.toPx())
+        drawLine(gridPaint, Offset(x1, y1 + bh / 3f), Offset(x2, y1 + bh / 3f), 1.dp.toPx())
+        drawLine(gridPaint, Offset(x1, y1 + 2f * bh / 3f), Offset(x2, y1 + 2f * bh / 3f), 1.dp.toPx())
+
+        // Corner handles
+        val handleLen = 18.dp.toPx()
+        val stroke = 3.5.dp.toPx()
+        // TL
+        drawLine(Color.White, Offset(x1, y1), Offset(x1 + handleLen, y1), stroke)
+        drawLine(Color.White, Offset(x1, y1), Offset(x1, y1 + handleLen), stroke)
+        // TR
+        drawLine(Color.White, Offset(x2, y1), Offset(x2 - handleLen, y1), stroke)
+        drawLine(Color.White, Offset(x2, y1), Offset(x2, y1 + handleLen), stroke)
+        // BL
+        drawLine(Color.White, Offset(x1, y2), Offset(x1 + handleLen, y2), stroke)
+        drawLine(Color.White, Offset(x1, y2), Offset(x1, y2 - handleLen), stroke)
+        // BR
+        drawLine(Color.White, Offset(x2, y2), Offset(x2 - handleLen, y2), stroke)
+        drawLine(Color.White, Offset(x2, y2), Offset(x2, y2 - handleLen), stroke)
+    }
+}
+
+@Composable
+private fun AdjustSlider(
+    label: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float> = -1f..1f,
+    onCommit: (Float) -> Unit,
+) {
     var live by remember(value) { mutableFloatStateOf(value) }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
@@ -656,6 +1100,6 @@ private fun AdjustSlider(label: String, value: Float, onCommit: (Float) -> Unit)
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurface,
         )
-        Slider(live, { live = it }, onValueChangeFinished = { onCommit(live) }, valueRange = -1f..1f)
+        Slider(live, { live = it }, onValueChangeFinished = { onCommit(live) }, valueRange = range)
     }
 }

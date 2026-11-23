@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.DocumentsContract
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Star
@@ -15,6 +16,7 @@ import com.example.R
 import com.example.core.common.FarError
 import com.example.core.common.FarResult
 import com.example.core.common.LocalDiagnostics
+import com.example.core.common.farCatching
 import com.example.core.common.resolveSummary
 import com.example.core.common.resolveTitle
 import com.example.core.common.safeParseMediaUri
@@ -22,10 +24,14 @@ import com.example.core.common.userTitle
 import com.example.core.database.FarDatabase
 import com.example.core.database.FileFavorite
 import com.example.core.database.FolderGrant
+import com.example.core.storage.Checksums
 import com.example.core.storage.Collision
 import com.example.core.storage.DocEntry
 import com.example.core.storage.DocumentOps
 import com.example.core.storage.OpEvent
+import com.example.core.storage.SearchHit
+import com.example.feature.settings.PinnedFolderShortcut
+import com.example.feature.settings.SettingsStore
 import com.example.ui.feedback.EmptyReason
 import com.example.ui.feedback.ErrorAction
 import com.example.ui.feedback.ErrorInfo
@@ -41,6 +47,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -49,12 +56,13 @@ import java.util.Date
 
 sealed interface FilesEvent {
     data class PreviewFile(val uri: Uri, val mime: String, val name: String) : FilesEvent
+    data class OpenGalleryMedia(val uri: Uri, val name: String, val isVideo: Boolean) : FilesEvent
     data class OpenFile(val uri: Uri, val mime: String) : FilesEvent
     data class Share(val uris: List<Uri>) : FilesEvent
     data class AskRename(val entry: FileEntry) : FilesEvent
     data class AskDelete(val entries: List<FileEntry>) : FilesEvent
     data class AskZip(val entries: List<FileEntry>) : FilesEvent
-    data class Properties(val entry: FileEntry, val path: String) : FilesEvent
+    data class Properties(val entry: FileEntry, val path: String, val uri: Uri? = null) : FilesEvent
     data object PickFolder : FilesEvent
     data class Message(val text: String, val undo: Boolean = false) : FilesEvent
 }
@@ -63,6 +71,7 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
     private val ctx = app
     private val db = FarDatabase.get(app)
     private val ops = DocumentOps(app.contentResolver)
+    private val settings = SettingsStore(app)
 
     private data class Clip(val tree: Uri, val items: List<DocEntry>, val move: Boolean)
 
@@ -79,25 +88,40 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
     private val stack = ArrayList<Pair<String, String>>()
     private var raw: List<DocEntry> = emptyList()
     private var starredList: List<FileFavorite> = emptyList()
+    private var grantsCache: List<FolderGrant> = emptyList()
+    private var pinnedCache: List<PinnedFolderShortcut> = emptyList()
+    private var recursiveHits: List<SearchHit> = emptyList()
     private var clip: Clip? = null
     private var opJob: Job? = null
+    private var searchJob: Job? = null
 
     init {
         viewModelScope.launch {
-            combine(db.folders().grants(), db.folders().favoriteFolders()) { grants, favs -> grants to favs }
-                .catch { emit(emptyList<FolderGrant>() to emptyList()) }
-                .collect { (grants, favs) ->
+            combine(db.folders().grants(), db.folders().favoriteFolders(), settings.flow) { grants, favs, s ->
+                Triple(grants, favs, s.pinnedFolders)
+            }
+                .catch { emit(Triple(emptyList(), emptyList(), emptyList())) }
+                .collect { (grants, favs, pinned) ->
+                    grantsCache = grants
                     starredList = favs
+                    pinnedCache = pinned
                     val places = buildList {
                         if (favs.isNotEmpty()) add(Place("starred", "Starred (${favs.size})", Icons.Filled.Star))
+                        pinned.forEach { p -> add(Place("pin_${p.id}", p.label, Icons.Filled.Bookmark)) }
                         grants.forEach { add(Place(it.treeUri, it.displayName, Icons.Filled.Folder)) }
                         add(Place("add", "Add folder…", Icons.Filled.CreateNewFolder))
                     }
-                    _ui.update { it.copy(places = places) }
+                    _ui.update { it.copy(places = places, isCurrentPinned = isCurrentLocationPinned()) }
                     if (_ui.value.selectedPlaceId == "starred") publishStarred()
-                    else if (tree != null) publish()
+                    else if (tree != null && !(_ui.value.searchSubfolders && _ui.value.searchQuery.isNotBlank())) publish()
                 }
         }
+    }
+
+    private fun isCurrentLocationPinned(): Boolean {
+        val t = tree?.toString() ?: return false
+        val cur = stack.lastOrNull()?.first ?: return false
+        return pinnedCache.any { it.treeUri == t && it.docId == cur }
     }
 
     fun addGrant(uri: Uri) = viewModelScope.launch {
@@ -112,6 +136,7 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
     }
 
     override fun openPlace(id: String) {
+        searchJob?.cancel()
         if (id == "add") {
             _events.tryEmit(FilesEvent.PickFolder)
             return
@@ -119,8 +144,36 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
         if (id == "starred") {
             tree = null
             stack.clear()
-            _ui.update { it.copy(selectedPlaceId = "starred", crumbs = listOf("Starred"), selection = emptySet()) }
+            _ui.update {
+                it.copy(
+                    selectedPlaceId = "starred",
+                    crumbs = listOf("Starred"),
+                    selection = emptySet(),
+                    searchSubfolders = false,
+                    searchScanning = false,
+                    isCurrentPinned = false,
+                    folderSummary = null,
+                )
+            }
             publishStarred()
+            return
+        }
+        if (id.startsWith("pin_")) {
+            val pinId = id.removePrefix("pin_")
+            val pin = pinnedCache.firstOrNull { it.id == pinId } ?: return
+            val parsed = safeParseMediaUri(pin.treeUri) ?: return
+            tree = parsed
+            stack.clear()
+            val rootId = ops.rootDocId(parsed)
+            val rootLabel = grantsCache.firstOrNull { it.treeUri == pin.treeUri }?.displayName ?: "Folder"
+            if (pin.docId == rootId) {
+                stack += rootId to rootLabel
+            } else {
+                stack += rootId to rootLabel
+                stack += pin.docId to pin.label
+            }
+            _ui.update { it.copy(selectedPlaceId = id, selection = emptySet(), searchQuery = "", searchSubfolders = false) }
+            load()
             return
         }
         val parsed = safeParseMediaUri(id) ?: return
@@ -128,44 +181,68 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
         stack.clear()
         val root = ops.rootDocId(parsed)
         stack += root to (_ui.value.places.firstOrNull { it.id == id }?.label ?: "Folder")
-        _ui.update { it.copy(selectedPlaceId = id, selection = emptySet()) }
+        _ui.update { it.copy(selectedPlaceId = id, selection = emptySet(), searchQuery = "", searchSubfolders = false) }
         load()
     }
 
     private fun publishStarred() {
-        val entries = starredList.map { f ->
-            FileEntry(
-                id = f.documentUri,
-                name = f.name,
-                isDirectory = false,
-                sizeBytes = null,
-                modifiedLabel = null,
-                typeLabel = "Starred",
-                mime = "*/*",
-                canRename = false,
-                canDelete = false,
-                canMove = false,
-                isStarred = true,
-            )
-        }
-        _ui.update {
-            it.copy(entries = if (entries.isEmpty()) UiState.Empty(EmptyReason.EmptyFolder) else UiState.Content(entries))
+        val currentList = starredList
+        viewModelScope.launch {
+            val fmt = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+            val entries = withContext(Dispatchers.IO) {
+                currentList.map { f ->
+                    val parsed = safeParseMediaUri(f.documentUri)
+                    val doc = parsed?.let { ops.inspectDoc(it) }
+                    val mime = doc?.mime?.ifBlank { null } ?: parsed?.let { ctx.contentResolver.getType(it) } ?: "*/*"
+                    FileEntry(
+                        id = f.documentUri,
+                        name = doc?.name?.ifBlank { f.name } ?: f.name,
+                        isDirectory = doc?.isDir ?: false,
+                        sizeBytes = doc?.size,
+                        modifiedLabel = doc?.modified?.let { fmt.format(Date(it)) },
+                        typeLabel = doc?.let(::typeLabel) ?: "Starred",
+                        mime = mime,
+                        canRename = false,
+                        canDelete = false,
+                        canMove = false,
+                        isStarred = true,
+                        contentUri = if (mime.startsWith("image/") || mime.startsWith("video/")) f.documentUri else null,
+                    )
+                }
+            }
+            val q = _ui.value.searchQuery.trim()
+            val filtered = if (q.isEmpty()) entries else entries.filter { it.name.contains(q, ignoreCase = true) }
+            val emptyReason = if (q.isNotEmpty()) EmptyReason.NoResults else EmptyReason.EmptyFolder
+            _ui.update {
+                it.copy(
+                    entries = if (filtered.isEmpty()) UiState.Empty(emptyReason) else UiState.Content(filtered),
+                    folderSummary = filtered.size to filtered.sumOf { e -> e.sizeBytes ?: 0L },
+                    refreshing = false,
+                )
+            }
         }
     }
 
     private fun load() {
         val t = tree ?: return
-        _ui.update { it.copy(entries = UiState.Loading, crumbs = stack.map { s -> s.second }) }
+        _ui.update {
+            it.copy(
+                entries = if (it.refreshing) it.entries else UiState.Loading,
+                crumbs = stack.map { s -> s.second },
+                isCurrentPinned = isCurrentLocationPinned(),
+            )
+        }
         viewModelScope.launch {
             val res = withContext(Dispatchers.IO) { ops.list(t, stack.last().first) }
             when (res) {
                 is FarResult.Ok -> {
                     raw = res.value
+                    _ui.update { it.copy(refreshing = false) }
                     publish()
                 }
                 is FarResult.Err -> {
                     LocalDiagnostics.recordEvent(ctx, res.error.code, "files_list", res.error.resolveTitle(ctx))
-                    _ui.update { it.copy(entries = UiState.Failure(errorFor(res.error))) }
+                    _ui.update { it.copy(entries = UiState.Failure(errorFor(res.error)), refreshing = false) }
                 }
             }
         }
@@ -206,6 +283,7 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
         val fmt = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
         val entries = list.map {
             val u = if (t != null) ops.docUri(t, it.docId).toString() else ""
+            val isThumb = !it.isDir && (it.mime.startsWith("image/") || it.mime.startsWith("video/"))
             FileEntry(
                 id = it.docId,
                 name = it.name,
@@ -218,14 +296,72 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
                 canDelete = it.canDelete,
                 canMove = it.canMove,
                 isStarred = u in starredUris,
+                contentUri = if (isThumb && u.isNotEmpty()) u else null,
             )
         }
         val emptyReason = if (q.isNotEmpty()) EmptyReason.NoResults else EmptyReason.EmptyFolder
+        val totalBytes = list.sumOf { if (it.isDir) 0L else (it.size ?: 0L) }
         _ui.update {
             it.copy(
                 entries = if (entries.isEmpty()) UiState.Empty(emptyReason) else UiState.Content(entries),
                 clipboardCount = clip?.items?.size ?: 0,
+                folderSummary = list.size to totalBytes,
             )
+        }
+    }
+
+    private fun runRecursiveSearch(query: String) {
+        searchJob?.cancel()
+        val t = tree ?: return
+        val start = stack.lastOrNull() ?: return
+        if (query.isBlank()) {
+            recursiveHits = emptyList()
+            _ui.update { it.copy(searchScanning = false) }
+            publish()
+            return
+        }
+        val starredUris = starredList.map { it.documentUri }.toSet()
+        val fmt = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+        _ui.update { it.copy(searchScanning = true) }
+        searchJob = viewModelScope.launch {
+            ops.searchRecursive(
+                tree = t,
+                startDocId = start.first,
+                startLabel = start.second,
+                query = query,
+                showHidden = _ui.value.showHidden,
+            )
+                .onCompletion { _ui.update { st -> st.copy(searchScanning = false) } }
+                .catch { _ui.update { st -> st.copy(searchScanning = false) } }
+                .collect { hits ->
+                    recursiveHits = hits
+                    val mapped = hits.map { hit ->
+                        val doc = hit.entry
+                        val u = ops.docUri(t, doc.docId).toString()
+                        val isThumb = !doc.isDir && (doc.mime.startsWith("image/") || doc.mime.startsWith("video/"))
+                        FileEntry(
+                            id = doc.docId,
+                            name = doc.name,
+                            isDirectory = doc.isDir,
+                            sizeBytes = doc.size,
+                            modifiedLabel = doc.modified?.let { m -> fmt.format(Date(m)) },
+                            typeLabel = typeLabel(doc),
+                            mime = doc.mime,
+                            canRename = doc.canRename,
+                            canDelete = doc.canDelete,
+                            canMove = doc.canMove,
+                            isStarred = u in starredUris,
+                            contentUri = if (isThumb) u else null,
+                            subtitlePath = hit.relPath,
+                        )
+                    }
+                    _ui.update { st ->
+                        st.copy(
+                            entries = if (mapped.isEmpty()) UiState.Empty(EmptyReason.NoResults) else UiState.Content(mapped),
+                            folderSummary = mapped.size to mapped.sumOf { if (it.isDirectory) 0L else (it.sizeBytes ?: 0L) },
+                        )
+                    }
+                }
         }
     }
 
@@ -235,17 +371,30 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
         e.mime.startsWith("video/") -> "Video"
         e.mime.startsWith("audio/") -> "Audio"
         e.mime == "application/pdf" -> "PDF"
-        e.mime == "application/zip" -> "ZIP archive"
+        e.mime == "application/zip" || e.mime == "application/x-zip-compressed" || e.name.endsWith(".zip", true) -> "ZIP archive"
         e.mime.startsWith("text/") -> "Text"
         else -> "File"
     }
 
-    private fun find(e: FileEntry) = raw.firstOrNull { it.docId == e.id }
+    private fun find(e: FileEntry): DocEntry? =
+        raw.firstOrNull { it.docId == e.id } ?: recursiveHits.firstOrNull { it.entry.docId == e.id }?.entry
+
+    private fun emitFileOpen(uri: Uri, mime: String, name: String) {
+        val isZip = mime == "application/zip" || mime == "application/x-zip-compressed" || name.endsWith(".zip", ignoreCase = true)
+        when {
+            mime.startsWith("image/") -> _events.tryEmit(FilesEvent.OpenGalleryMedia(uri, name, isVideo = false))
+            mime.startsWith("video/") -> _events.tryEmit(FilesEvent.OpenGalleryMedia(uri, name, isVideo = true))
+            isZip || mime == "application/pdf" || mime.startsWith("text/") || mime in setOf("application/json", "application/xml") ->
+                _events.tryEmit(FilesEvent.PreviewFile(uri, mime, name))
+            else -> _events.tryEmit(FilesEvent.OpenFile(uri, mime))
+        }
+    }
 
     override fun openEntry(e: FileEntry) {
         if (_ui.value.selectedPlaceId == "starred") {
             val uri = safeParseMediaUri(e.id) ?: return
-            _events.tryEmit(FilesEvent.OpenFile(uri, ctx.contentResolver.getType(uri) ?: "*/*"))
+            val mime = e.mime ?: ctx.contentResolver.getType(uri) ?: "*/*"
+            emitFileOpen(uri, mime, e.name)
             return
         }
         val t = tree ?: return
@@ -253,33 +402,54 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
             toggleSelect(e)
             return
         }
+        val hit = if (_ui.value.searchSubfolders && _ui.value.searchQuery.isNotBlank()) {
+            recursiveHits.firstOrNull { it.entry.docId == e.id }
+        } else null
+
         if (e.isDirectory) {
-            stack += e.id to e.name
+            searchJob?.cancel()
+            if (hit != null) {
+                stack.clear()
+                stack.addAll(hit.breadcrumb)
+            } else {
+                stack += e.id to e.name
+            }
+            _ui.update { it.copy(searchQuery = "", searchSubfolders = false, searchScanning = false) }
             load()
         } else {
             val uri = ops.docUri(t, e.id)
-            val mime = e.mime ?: "*/*"
-            if (mime == "application/pdf" || mime.startsWith("text/") || mime in setOf("application/json", "application/xml")) {
-                _events.tryEmit(FilesEvent.PreviewFile(uri, mime, e.name))
-            } else {
-                _events.tryEmit(FilesEvent.OpenFile(uri, mime))
-            }
+            emitFileOpen(uri, e.mime ?: "*/*", e.name)
         }
     }
 
     override fun navigateToCrumb(index: Int) {
+        searchJob?.cancel()
         while (stack.size > index + 1) stack.removeAt(stack.lastIndex)
+        _ui.update { it.copy(searchQuery = "", searchSubfolders = false, searchScanning = false) }
         load()
     }
 
     override fun up() {
+        searchJob?.cancel()
         if (stack.size > 1) {
             stack.removeAt(stack.lastIndex)
+            _ui.update { it.copy(searchQuery = "", searchSubfolders = false, searchScanning = false) }
             load()
         } else {
             tree = null
             stack.clear()
-            _ui.update { it.copy(selectedPlaceId = null, crumbs = emptyList(), selection = emptySet()) }
+            _ui.update {
+                it.copy(
+                    selectedPlaceId = null,
+                    crumbs = emptyList(),
+                    selection = emptySet(),
+                    searchQuery = "",
+                    searchSubfolders = false,
+                    searchScanning = false,
+                    isCurrentPinned = false,
+                    folderSummary = null,
+                )
+            }
         }
     }
 
@@ -292,7 +462,11 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
 
     override fun toggleHidden() {
         _ui.update { it.copy(showHidden = !it.showHidden) }
-        publish()
+        if (_ui.value.searchSubfolders && _ui.value.searchQuery.isNotBlank()) {
+            runRecursiveSearch(_ui.value.searchQuery)
+        } else {
+            publish()
+        }
     }
 
     override fun toggleSelect(e: FileEntry) =
@@ -300,7 +474,53 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
 
     override fun setSearch(query: String) {
         _ui.update { it.copy(searchQuery = query) }
-        if (_ui.value.selectedPlaceId == "starred") publishStarred() else publish()
+        when {
+            _ui.value.selectedPlaceId == "starred" -> publishStarred()
+            _ui.value.searchSubfolders -> runRecursiveSearch(query)
+            else -> publish()
+        }
+    }
+
+    override fun toggleSearchSubfolders() {
+        val next = !_ui.value.searchSubfolders
+        _ui.update { it.copy(searchSubfolders = next) }
+        if (next && _ui.value.searchQuery.isNotBlank()) {
+            runRecursiveSearch(_ui.value.searchQuery)
+        } else {
+            searchJob?.cancel()
+            _ui.update { it.copy(searchScanning = false) }
+            publish()
+        }
+    }
+
+    override fun togglePinCurrent() {
+        val t = tree?.toString() ?: return
+        val cur = stack.lastOrNull() ?: return
+        val docId = cur.first
+        val label = cur.second
+        viewModelScope.launch {
+            val wasPinned = isCurrentLocationPinned()
+            settings.update { s ->
+                val list = s.pinnedFolders
+                val updated = if (wasPinned) {
+                    list.filterNot { it.treeUri == t && it.docId == docId }
+                } else {
+                    val id = "${t}_$docId".hashCode().toString()
+                    (list.filterNot { it.treeUri == t && it.docId == docId }) + PinnedFolderShortcut(id, t, docId, label)
+                }
+                s.copy(pinnedFolders = updated)
+            }
+            _events.tryEmit(
+                FilesEvent.Message(
+                    ctx.getString(if (wasPinned) R.string.files_pinned_removed else R.string.files_pinned_saved)
+                )
+            )
+        }
+    }
+
+    override fun refresh() {
+        _ui.update { it.copy(refreshing = true) }
+        if (_ui.value.selectedPlaceId == "starred") publishStarred() else load()
     }
 
     override fun selectAll() {
@@ -314,7 +534,9 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
 
     override fun batchAction(action: String) {
         val t = tree ?: return
-        val selectedDocs = _ui.value.selection.mapNotNull { id -> raw.firstOrNull { it.docId == id } }
+        val selectedDocs = _ui.value.selection.mapNotNull { id ->
+            raw.firstOrNull { it.docId == id } ?: recursiveHits.firstOrNull { it.entry.docId == id }?.entry
+        }
         if (selectedDocs.isEmpty()) return
         when (action) {
             "copy" -> {
@@ -348,7 +570,7 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
     fun confirmCreateZip(entries: List<FileEntry>, archiveName: String) {
         val t = tree ?: return
         val parent = stack.lastOrNull()?.first ?: return
-        val docs = entries.mapNotNull { e -> raw.firstOrNull { it.docId == e.id } }
+        val docs = entries.mapNotNull { e -> find(e) }
         if (docs.isEmpty()) return
         _ui.update { it.copy(selection = emptySet()) }
         runOp("Creating ZIP", docs.size) { step ->
@@ -357,6 +579,27 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
                 is FarResult.Err -> {
                     LocalDiagnostics.recordEvent(ctx, res.error.code, "files_zip", res.error.userTitle())
                     _events.tryEmit(FilesEvent.Message("Couldn't create ZIP (${res.error.code})."))
+                }
+            }
+        }
+    }
+
+    fun extractZipByUri(uri: Uri, name: String) {
+        val t = tree ?: return
+        val parent = stack.lastOrNull()?.first ?: return
+        val inMemory = raw.firstOrNull { ops.docUri(t, it.docId) == uri }
+            ?: recursiveHits.firstOrNull { ops.docUri(t, it.entry.docId) == uri }?.entry
+        runOp("Extracting", 1) { step ->
+            step(0, name)
+            val matched = inMemory ?: ops.inspectDoc(uri) ?: run {
+                _events.tryEmit(FilesEvent.Message("ZIP archive is no longer accessible."))
+                return@runOp
+            }
+            when (val res = ops.extractZip(t, parent, matched)) {
+                is FarResult.Ok -> _events.tryEmit(FilesEvent.Message("Extracted ${res.value} file(s)"))
+                is FarResult.Err -> {
+                    LocalDiagnostics.recordEvent(ctx, res.error.code, "files_unzip", res.error.userTitle())
+                    _events.tryEmit(FilesEvent.Message("ZIP extraction stopped (${res.error.code}). Original archive is intact."))
                 }
             }
         }
@@ -379,10 +622,14 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
     override fun contextAction(e: FileEntry, action: String) {
         val t = tree ?: return
         val sel = _ui.value.selection.takeIf { e.id in it && it.size > 1 }
-            ?.mapNotNull { id -> raw.firstOrNull { it.docId == id } } ?: listOfNotNull(find(e))
+            ?.mapNotNull { id -> raw.firstOrNull { it.docId == id } ?: recursiveHits.firstOrNull { it.entry.docId == id }?.entry }
+            ?: listOfNotNull(find(e))
         when (action) {
             "open" -> openEntry(e)
-            "share" -> _events.tryEmit(FilesEvent.Share(sel.filter { !it.isDir }.map { ops.docUri(t, it.docId) }))
+            "share" -> {
+                val uris = sel.filter { !it.isDir }.map { ops.docUri(t, it.docId) }
+                if (uris.isNotEmpty()) _events.tryEmit(FilesEvent.Share(uris))
+            }
             "copy" -> {
                 clip = Clip(t, sel, false)
                 publish()
@@ -418,7 +665,18 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
                     }
                 }
             }
-            "properties" -> _events.tryEmit(FilesEvent.Properties(e, stack.joinToString("/") { it.second } + "/" + e.name))
+            "properties" -> {
+                val docUri = if (e.isDirectory) null else ops.docUri(t, e.id)
+                _events.tryEmit(FilesEvent.Properties(e, stack.joinToString("/") { it.second } + "/" + e.name, docUri))
+            }
+        }
+    }
+
+    suspend fun computeSha256(uri: Uri): FarResult<String> = withContext(Dispatchers.IO) {
+        farCatching {
+            ctx.contentResolver.openInputStream(uri)?.use { stream ->
+                Checksums.sha256(stream)
+            } ?: throw java.io.IOException("openInputStream returned null")
         }
     }
 

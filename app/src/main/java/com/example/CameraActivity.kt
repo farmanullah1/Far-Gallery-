@@ -34,6 +34,7 @@ import coil.compose.AsyncImage
 import com.example.app.IncomingRoute
 import com.example.app.IntentResults
 import com.example.app.IntentRouter
+import com.example.core.common.safeParseMediaUri
 import com.example.feature.camera.CameraCapabilities
 import com.example.feature.camera.CameraMode
 import com.example.feature.camera.CameraScreen
@@ -56,17 +57,37 @@ class CameraActivity : AppCompatActivity() {
         }
         setContent {
             FarTheme(forceDarkSystemBars = true) {
-                CameraHost(vm, onClose = { finish() }, onOpenLast = ::openInGallery)
+                CameraHost(
+                    vm = vm,
+                    onClose = { finish() },
+                    onOpenLast = ::openInGallery,
+                    onEditLastScan = ::openEditInGallery,
+                )
             }
         }
     }
 
-    private fun openInGallery(uri: Uri) = startActivity(
-        Intent(Intent.ACTION_VIEW)
-            .setDataAndType(uri, contentResolver.getType(uri) ?: "image/*")
-            .setPackage(packageName)
-            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    )
+    private fun openInGallery(uri: Uri) {
+        runCatching {
+            startActivity(
+                Intent(Intent.ACTION_VIEW)
+                    .setDataAndType(uri, contentResolver.getType(uri) ?: "image/*")
+                    .setPackage(packageName)
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            )
+        }
+    }
+
+    private fun openEditInGallery(uri: Uri) {
+        runCatching {
+            startActivity(
+                Intent(Intent.ACTION_EDIT)
+                    .setDataAndType(uri, contentResolver.getType(uri) ?: "image/*")
+                    .setPackage(packageName)
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            )
+        }
+    }
 
     override fun onStop() {
         super.onStop()
@@ -87,6 +108,7 @@ fun CameraHost(
     vm: CameraViewModel,
     onClose: () -> Unit,
     onOpenLast: (Uri) -> Unit,
+    onEditLastScan: ((Uri) -> Unit)? = null,
 ) {
     val ctx = LocalContext.current
     val state by vm.state.collectAsState()
@@ -135,11 +157,18 @@ fun CameraHost(
         onExposure = vm::setExposure,
         onCycleTimer = vm::cycleTimer,
         onToggleGrid = vm::toggleGrid,
+        onToggleLevel = vm::toggleLevel,
+        onToggleBurst = vm::toggleBurst,
+        onFocusPoint = vm::setFocusLock,
+        onClearFocusLock = vm::clearFocusLock,
         onToggleQr = vm::toggleQr,
         onDismissQr = vm::dismissQr,
         onShutter = vm::shutter,
         onFlip = vm::flip,
-        onOpenLast = { state.lastCaptureUri?.let { onOpenLast(Uri.parse(it)) } },
+        onOpenLast = { state.lastCaptureUri?.let { safeParseMediaUri(it)?.let(onOpenLast) } },
+        onEditLastScan = if (onEditLastScan != null) {
+            { uriStr -> safeParseMediaUri(uriStr)?.let(onEditLastScan) }
+        } else null,
         onClose = onClose,
         onRequestPermission = { launcher.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)) },
         lastThumbnail = { uri -> AsyncImage(uri, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) },

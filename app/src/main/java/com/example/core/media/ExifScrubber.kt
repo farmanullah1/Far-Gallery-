@@ -38,8 +38,11 @@ data class QuickExifInfo(
 }
 
 object ExifScrubber {
+    private val exifCache = android.util.LruCache<String, QuickExifInfo>(64)
 
     suspend fun readQuickExif(resolver: ContentResolver, uri: Uri): QuickExifInfo? = withContext(Dispatchers.IO) {
+        val cacheKey = uri.toString()
+        synchronized(exifCache) { exifCache.get(cacheKey) }?.let { return@withContext it }
         runCatching {
             resolver.openInputStream(uri)?.use { stream ->
                 val exif = ExifInterface(stream)
@@ -72,7 +75,9 @@ object ExifScrubber {
                         ?.let { "${it.toInt()}mm" }
                 val hasGps = exif.getAttribute(ExifInterface.TAG_GPS_LATITUDE) != null &&
                     exif.getAttribute(ExifInterface.TAG_GPS_LONGITUDE) != null
-                QuickExifInfo(camera, aperture, exposure, iso, focal, hasGps)
+                QuickExifInfo(camera, aperture, exposure, iso, focal, hasGps).also { info ->
+                    synchronized(exifCache) { exifCache.put(cacheKey, info) }
+                }
             }
         }.getOrNull()
     }
@@ -126,8 +131,9 @@ object ExifScrubber {
                     val out = r.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
                         ?: throw java.io.IOException("insert failed")
                     try {
-                        r.openOutputStream(out)!!.use { os ->
-                            if (!bmp.compress(Bitmap.CompressFormat.JPEG, 95, os)) {
+                        val os = r.openOutputStream(out) ?: throw java.io.IOException("openOutputStream returned null")
+                        os.use { stream ->
+                            if (!bmp.compress(Bitmap.CompressFormat.JPEG, 95, stream)) {
                                 throw java.io.IOException("encode failed")
                             }
                         }

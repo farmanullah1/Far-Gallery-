@@ -265,4 +265,117 @@
     <string name="error_boundary_body">آپ کی تصاویر اور فائلیں محفوظ ہیں۔ دوبارہ بحال کریں یا واپس جائیں۔</string>
     <string name="error_boundary_reset">اسکرین بحال کریں</string>
     <string name="error_boundary_back">واپس جائیں</string>
+    <!-- Pro Camera & QR Action Sheet -->
+    <string name="camera_mode_video">ویڈیو</string>
+    <string name="camera_mode_photo">تصویر</string>
+    <string name="camera_mode_square">مربع</string>
+    <string name="camera_mode_scan">اسکین</string>
+    <string name="camera_timer_off">ٹائمر بند</string>
+    <string name="camera_timer_sec">%1$d سیکنڈ</string>
+    <string name="camera_grid">گرڈ</string>
+    <string name="camera_level">لیول</string>
+    <string name="camera_qr">QR</string>
+    <string name="camera_burst">برسٹ</string>
+    <string name="camera_burst_counter">برسٹ · %1$d</string>
+    <string name="camera_ae_af_locked">AE/AF لاک</string>
+    <string name="camera_ae_af_tap_unlock">ان لاک کرنے کے لیے ٹچ کریں</string>
+    <string name="camera_scan_edit">اسکین میں ترمیم کریں</string>
+    <string name="camera_qr_url">ویب لنک</string>
+    <string name="camera_qr_wifi">وائی فائی نیٹ ورک</string>
+    <string name="camera_qr_phone">فون نمبر</string>
+    <string name="camera_qr_email">ای میل پتہ</string>
+    <string name="camera_qr_contact">رابطہ کارڈ</string>
+    <string name="camera_qr_text">QR متن</string>
+    <string name="camera_qr_copy_password">پاس ورڈ کاپی کریں</string>
+    <string name="camera_qr_dial">ڈائل کریں</string>
+    <string name="camera_qr_email_action">ای میل بھیجیں</string>
+    <string name="cd_close_camera">کیمرہ بند کریں</string>
+    <string name="cd_camera_options_show">کیمرے کے اختیارات دکھائیں</string>
+    <string name="cd_camera_options_hide">کیمرے کے اختیارات چھپائیں</string>
+    <string name="cd_open_last_capture">آخری تصویر کھولیں</string>
+    <string name="cd_switch_camera">کیمرہ بدلیں</string>
+    <string name="cd_take_photo">تصویر لیں</string>
+    <string name="cd_start_recording">ریکارڈنگ شروع کریں</string>
+    <string name="cd_stop_recording">ریکارڈنگ روکیں</string>
+
+    <!-- Photo Editor & Video Trimmer -->
+    <string name="editor_tab_adjust">ایڈجسٹ</string>
+    <string name="editor_tab_presets">پری سیٹس</string>
+    <string name="editor_tab_crop">کروپ</string>
+    <string name="editor_tab_rotate">گھمائیں</string>
+    <string name="editor_brightness">چمک</string>
+    <string name="editor_contrast">تضاد</string>
+    <string name="editor_saturation">رنگت</string>
+    <string name="editor_warmth">گرمائش</string>
+    <string name="editor_vignette">ویگنیٹ</string>
+    <string name="editor_rotate_left">بائیں گھمائیں</string>
+    <string name="editor_rotate_right">دائیں گھمائیں</string>
+    <string name="editor_flip">پلٹیں</string>
+    <string name="editor_strip_exif_on">EXIF حذف: فعال</string>
+    <string name="editor_strip_exif_off">EXIF: برقرار</string>
+    <string name="editor_preset_original">اصل</string>
+    <string name="editor_preset_vivid">شوخ</string>
+    <string name="editor_preset_warm_film">گرم فلم</string>
+    <string name="editor_preset_matte">میٹ</string>
+    <string name="editor_preset_cool_crisp">ٹھنڈا واضح</string>
+    <string name="editor_preset_noir">سیاہ و سفید</string>
+    <string name="editor_preset_doc_scan">دستاویز اسکین</string>
+    <string name="editor_preset_golden_hour">سنہری</string>
+    <string name="video_trim_title">کاٹیں اور کاپی محفوظ کریں</string>
+    <string name="video_trim_speed">ایکسپورٹ رفتار</string>
+    <string name="video_trim_mute">محفوظ کاپی میں آواز بند رکھیں</string>
+    <string name="video_trim_untouched_note">نئی کاپی کے طور پر محفوظ ہوگا۔ اصل ویڈیو محفوظ رہے گی۔</string>
+    <string name="video_save_frame">فریم محفوظ کریں</string>
+    <string name="video_pip">پکچر ان پکچر</string>
+    <string name="video_back_10s">10 سیکنڈ پیچھے</string>
+    <string name="video_forward_10s">10 سیکنڈ آگے</string>
+
+    <!-- Quick Share Presets -->
+    <string name="share_presets_title">فوری شیئر کے اختیارات</string>
+    <string name="share_preset_original">اصل معیار</string>
+    <string name="share_preset_original_sub">بغیر تبدیلی کے اصل فائل شیئر کریں</string>
+    <string name="share_preset_clean">پرائیویسی کلین (GPS اور EXIF ہٹائیں)</string>
+    <string name="share_preset_clean_sub">مقام، کیمرہ ماڈل اور وقت کی تفصیل ہٹاتا ہے</string>
+    <string name="share_preset_compact">کمپیکٹ 1600px JPEG (بغیر EXIF)</string>
+    <string name="share_preset_compact_sub">میٹا ڈیٹا کے بغیر تیز شیئرنگ کے لیے چھوٹا سائز</string>
+    <string name="share_preset_messaging">میسجنگ 1080px JPEG (بغیر EXIF)</string>
+    <string name="share_preset_messaging_sub">چیٹ ایپس کے لیے ہلکی پھلکی کاپی</string>
+
+    <!-- Duplicates & Storage Analyzer -->
+    <string name="dup_reclaimable_summary">%1$d گروپس · %2$s خالی کی جا سکتی ہے</string>
+    <string name="dup_smart_select">اضافی کاپیاں منتخب کریں</string>
+    <string name="dup_clear_marks">انتخاب صاف کریں</string>
+    <string name="dup_identical_copies">%1$d یکساں کاپیاں</string>
+    <string name="dup_no_title">کوئی یکساں ڈپلیکیٹ نہیں</string>
+    <string name="dup_no_body">آپ کی لائبریری میں ہر تصویر اور ویڈیو منفرد ہے۔</string>
+    <string name="storage_breakdown">لائبریری کی تقسیم</string>
+    <string name="storage_large_files">بڑی فائلیں</string>
+    <string name="storage_filter_all">سب</string>
+    <string name="storage_filter_videos">ویڈیوز</string>
+    <string name="storage_filter_camera">کیمرہ</string>
+    <string name="storage_filter_screenshots">اسکرین شاٹس</string>
+    <string name="storage_filter_other">دیگر</string>
+    <string name="storage_trash_selected">منتخب کو ٹریش کریں (%1$d)</string>
+
+    <!-- Far Files Upgrades -->
+    <string name="files_this_folder">یہ فولڈر</string>
+    <string name="files_all_subfolders">ذیلی فولڈرز</string>
+    <string name="files_pin_folder">شارٹ کٹ پن کریں</string>
+    <string name="files_unpin_folder">پن ہٹائیں</string>
+    <string name="files_pinned_saved">مقامات میں پن کر دیا گیا</string>
+    <string name="files_pinned_removed">مقامات سے ہٹا دیا گیا</string>
+    <string name="files_folder_summary">%1$d آئٹمز · %2$s</string>
+    <string name="files_list_view">فہرست منظر</string>
+    <string name="files_grid_view">گرڈ منظر</string>
+    <string name="files_new_folder">نیا فولڈر</string>
+    <string name="files_extract_zip">ZIP یہیں کھولیں</string>
+    <string name="files_properties">خصوصیات</string>
+    <string name="files_select">منتخب کریں</string>
+    <string name="files_star">ستارہ لگائیں</string>
+    <string name="files_unstar">ستارہ ہٹائیں</string>
+    <string name="files_zip_preview_entries">آرکائیو میں %1$d آئٹمز</string>
+    <string name="files_zip_preview_unsafe">غیر محفوظ آرکائیو پاتھ روک دیا گیا</string>
+    <string name="files_pdf_page_count">%1$d صفحات</string>
+    <string name="files_search_scanning">ذیلی فولڈرز تلاش ہو رہے ہیں…</string>
+    <string name="files_more_options">%1$s کے مزید اختیارات</string>
 </resources>

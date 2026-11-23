@@ -2,6 +2,7 @@ package com.example.feature.duplicates
 
 import android.content.ContentResolver
 import android.net.Uri
+import android.text.format.Formatter
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -37,6 +38,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -46,6 +48,7 @@ import com.example.core.common.FarResult
 import com.example.core.common.farCatching
 import com.example.core.media.MediaRow
 import com.example.core.storage.Checksums
+import com.example.ui.components.FarFilterPill
 import com.example.ui.components.FarTopBar
 import com.example.ui.feedback.EmptyState
 import com.example.ui.theme.FarSpacing
@@ -77,7 +80,8 @@ class DuplicateFinder(private val resolver: ContentResolver) {
             currentCoroutineContext().ensureActive()
             emit(DupScan.Progress(i, candidates.size))
             val h = (farCatching {
-                resolver.openInputStream(row.uri)!!.use(Checksums::sha256)
+                val input = resolver.openInputStream(row.uri) ?: throw java.io.IOException("openInputStream returned null")
+                input.use(Checksums::sha256)
             } as? FarResult.Ok)?.value ?: return@forEachIndexed
             byHash.getOrPut(h) { ArrayList() } += row
         }
@@ -91,9 +95,29 @@ class DuplicateFinder(private val resolver: ContentResolver) {
     }.flowOn(Dispatchers.IO)
 }
 
+object DuplicateLogic {
+    /**
+     * Marks unprotected duplicate copies while guaranteeing at least one copy (ideally protected,
+     * oldest/highest quality kept) remains unticked in every group.
+     */
+    fun smartSelectExtraCopies(groups: List<DupGroup>): Set<Long> = buildSet {
+        groups.forEach { g ->
+            val protectedCount = g.items.count { it.protected }
+            val unprotected = g.items.filter { !it.protected }
+            val toMark = if (protectedCount > 0) unprotected else unprotected.drop(1)
+            toMark.forEach { add(it.row.id) }
+        }
+    }
+
+    fun reclaimableBytes(groups: List<DupGroup>, markedIds: Set<Long>): Long =
+        groups.sumOf { g ->
+            g.items.filter { it.row.id in markedIds }.sumOf { it.row.sizeBytes.coerceAtLeast(0L) }
+        }
+}
+
 /**
  * Review UI. Safety rules enforced here:
- * - only unprotected copies after the first are pre-ticked
+ * - only unprotected extra copies are pre-ticked
  * - the last remaining copy in any group can never be ticked
  * - protected items (favorite / in a user album) stay unticked and labeled
  * - deletion goes through Android system Trash consent
@@ -107,12 +131,11 @@ fun DuplicatesScreen(
     modifier: Modifier = Modifier,
 ) {
     BackHandler(onBack = onBack)
+    val ctx = LocalContext.current
     val semantic = LocalSemanticColors.current
     val marked = remember(groups) {
         mutableStateMapOf<Long, Boolean>().apply {
-            groups.forEach { g ->
-                g.items.filter { !it.protected }.drop(1).forEach { this[it.row.id] = true }
-            }
+            DuplicateLogic.smartSelectExtraCopies(groups).forEach { this[it] = true }
         }
     }
     Column(
@@ -139,13 +162,52 @@ fun DuplicatesScreen(
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 EmptyState(
                     Icons.Filled.ContentCopy,
-                    "No exact duplicates",
-                    "Every photo and video in your library has unique contents.",
+                    stringResource(R.string.dup_no_title),
+                    stringResource(R.string.dup_no_body),
                 )
             }
         } else {
+            val activeMarkedIds = marked.filterValues { it }.keys
+            val reclaimable = DuplicateLogic.reclaimableBytes(groups, activeMarkedIds)
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = FarSpacing.screenPadding, vertical = 6.dp)
+                    .background(semantic.elevatedSurface, RoundedCornerShape(18.dp))
+                    .border(0.75.dp, semantic.cardBorder, RoundedCornerShape(18.dp))
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    stringResource(
+                        R.string.dup_reclaimable_summary,
+                        groups.size,
+                        Formatter.formatFileSize(ctx, reclaimable),
+                    ),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FarFilterPill(
+                        label = stringResource(R.string.dup_smart_select),
+                        selected = activeMarkedIds.isNotEmpty(),
+                        onClick = {
+                            marked.clear()
+                            DuplicateLogic.smartSelectExtraCopies(groups).forEach { marked[it] = true }
+                        },
+                        modifier = Modifier.testTag("dup_smart_select_pill"),
+                    )
+                    FarFilterPill(
+                        label = stringResource(R.string.dup_clear_marks),
+                        selected = activeMarkedIds.isEmpty(),
+                        onClick = { marked.clear() },
+                        modifier = Modifier.testTag("dup_clear_marks_pill"),
+                    )
+                }
+            }
+
             LazyColumn(
-                contentPadding = PaddingValues(horizontal = FarSpacing.screenPadding, vertical = 12.dp),
+                contentPadding = PaddingValues(horizontal = FarSpacing.screenPadding, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.weight(1f),
             ) {
@@ -159,7 +221,11 @@ fun DuplicatesScreen(
                                 .padding(14.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            Text("${g.items.size} identical copies", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+                            Text(
+                                stringResource(R.string.dup_identical_copies, g.items.size),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 items(g.items, key = { it.row.id }) { d ->
                                     val ticked = marked[d.row.id] == true
@@ -182,7 +248,7 @@ fun DuplicatesScreen(
                                                     onCheckedChange = { want -> if (!want || othersKept > 0) marked[d.row.id] = want },
                                                     enabled = ticked || othersKept > 0,
                                                 )
-                                                Text("Delete", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
+                                                Text(stringResource(R.string.action_delete), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
                                             }
                                         }
                                     }

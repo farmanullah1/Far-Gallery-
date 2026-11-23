@@ -155,4 +155,36 @@ class AppStartupRobolectricTest {
         assertNotNull(controller.get())
         controller.pause().stop().destroy()
     }
+
+    @Test(timeout = 25_000)
+    fun mainActivity_realOnCreateAndResumeComposesWithoutCrash() {
+        runBlocking {
+            val app = ApplicationProvider.getApplicationContext<Application>()
+            val intent = Intent(app, MainActivity::class.java).apply {
+                action = Intent.ACTION_MAIN
+                addCategory(Intent.CATEGORY_LAUNCHER)
+            }
+            val controller = Robolectric.buildActivity(MainActivity::class.java, intent).setup()
+            kotlinx.coroutines.delay(400)
+            org.robolectric.shadows.ShadowLooper.idleMainLooper()
+            assertNotNull(controller.get())
+            controller.pause().stop().destroy()
+        }
+    }
+
+    @Test(timeout = 25_000)
+    fun filesLauncherAlias_startsMainActivityOnFilesWithoutCrash() {
+        runBlocking {
+            val app = ApplicationProvider.getApplicationContext<Application>()
+            val intent = Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_LAUNCHER)
+                setClassName(app.packageName, "com.example.FilesLauncher")
+            }
+            val controller = Robolectric.buildActivity(MainActivity::class.java, intent).setup()
+            kotlinx.coroutines.delay(400)
+            org.robolectric.shadows.ShadowLooper.idleMainLooper()
+            assertNotNull(controller.get())
+            controller.pause().stop().destroy()
+        }
+    }
 }

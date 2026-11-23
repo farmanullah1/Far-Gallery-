@@ -31,18 +31,26 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FolderOff
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhotoAlbum
@@ -50,9 +58,9 @@ import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Screenshot
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Videocam
+import com.example.core.database.SavedSearch
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -97,7 +105,7 @@ import com.example.ui.theme.FarMotion
 import com.example.ui.theme.FarSpacing
 import com.example.ui.theme.LocalReducedMotion
 import com.example.ui.theme.LocalSemanticColors
-import dev.chrisbanes.haze.HazeState
+import com.example.ui.glass.FarGlassState
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -157,6 +165,7 @@ data class MemoryUi(
 
 enum class SystemCollection(val labelRes: Int, val icon: ImageVector) {
     Favorites(R.string.collection_favorites, Icons.Filled.Favorite),
+    RecentlyViewed(R.string.collection_recent, Icons.Filled.History),
     Videos(R.string.collection_videos, Icons.Filled.Videocam),
     Screenshots(R.string.collection_screenshots, Icons.Filled.Screenshot),
     Camera(R.string.collection_camera, Icons.Filled.PhotoCamera),
@@ -173,7 +182,7 @@ fun AlbumsScreen(
     memories: List<MemoryUi>,
     albumSort: AlbumSort,
     onAlbumSortChange: (AlbumSort) -> Unit,
-    glass: HazeState,
+    glass: FarGlassState,
     onOpenAlbum: (AlbumUi) -> Unit,
     onOpenMemory: (MemoryUi) -> Unit,
     onOpenCollection: (SystemCollection) -> Unit,
@@ -397,7 +406,7 @@ fun AlbumsScreen(
                                     .testTag("album_sort_button"),
                             ) {
                                 Icon(
-                                    Icons.Filled.Sort,
+                                    Icons.AutoMirrored.Filled.Sort,
                                     stringResource(R.string.albums_sort),
                                     tint = MaterialTheme.colorScheme.onSurface,
                                 )
@@ -595,6 +604,7 @@ sealed interface IndexStatus {
     data object LimitedAccess : IndexStatus
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SearchScreen(
     query: String,
@@ -612,18 +622,31 @@ fun SearchScreen(
     ocrCount: Int,
     onRunOcrScan: () -> Unit,
     resultCount: Int?,
-    glass: HazeState,
+    glass: FarGlassState,
     results: @Composable () -> Unit,
     modifier: Modifier = Modifier,
+    onRemoveRecent: ((String) -> Unit)? = null,
+    allTags: List<String> = emptyList(),
+    selectedTag: String? = null,
+    onSelectTag: ((String?) -> Unit)? = null,
+    savedSearches: List<SavedSearch> = emptyList(),
+    onSaveSearch: ((String) -> Unit)? = null,
+    onApplySavedSearch: ((SavedSearch) -> Unit)? = null,
+    onDeleteSavedSearch: ((Long) -> Unit)? = null,
 ) {
-    val hasActiveFilter = query.isNotBlank() || scope != SearchScope.All || dateRange != DateRangeFilter.Any || sizeFilter != SizeFilter.Any
-    val hasSecondaryFilter = dateRange != DateRangeFilter.Any || sizeFilter != SizeFilter.Any
+    val hasActiveFilter = query.isNotBlank() ||
+        scope != SearchScope.All ||
+        dateRange != DateRangeFilter.Any ||
+        sizeFilter != SizeFilter.Any ||
+        selectedTag != null
+    val hasSecondaryFilter = dateRange != DateRangeFilter.Any || sizeFilter != SizeFilter.Any || selectedTag != null
     val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val semantic = LocalSemanticColors.current
     val reduced = LocalReducedMotion.current
     val density = LocalDensity.current
     var filterDrawerOpen by remember { mutableStateOf(false) }
+    var savingDialog by remember { mutableStateOf(false) }
     var topBarHeightPx by remember { mutableIntStateOf(0) }
     val targetTopInset = if (topBarHeightPx > 0) with(density) { topBarHeightPx.toDp() } else statusTop + 158.dp
     val topInset by animateDpAsState(targetTopInset, FarMotion.spatial(reduced), label = "searchTopInset")
@@ -639,6 +662,8 @@ fun SearchScreen(
                 when {
                     !hasActiveFilter -> Column(
                         Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
                             .padding(horizontal = FarSpacing.screenPadding)
                             .padding(bottom = navBottom + FarSpacing.bottomDockClearance),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -684,6 +709,80 @@ fun SearchScreen(
                             }
                         }
 
+                        if (savedSearches.isNotEmpty() && onApplySavedSearch != null) {
+                            Text(
+                                stringResource(R.string.search_saved_title),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                items(savedSearches, key = { it.id }) { saved ->
+                                    Row(
+                                        Modifier
+                                            .defaultMinSize(minHeight = 48.dp)
+                                            .clip(RoundedCornerShape(20.dp))
+                                            .background(semantic.elevatedSurface)
+                                            .border(0.75.dp, semantic.cardBorder, RoundedCornerShape(20.dp)),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Row(
+                                            Modifier
+                                                .defaultMinSize(minHeight = 48.dp)
+                                                .clickable { onApplySavedSearch(saved) }
+                                                .padding(start = 12.dp, end = if (onDeleteSavedSearch != null) 4.dp else 12.dp)
+                                                .testTag("saved_search_chip_${saved.id}"),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                        ) {
+                                            Icon(Icons.Filled.Bookmark, null, Modifier.size(15.dp), tint = MaterialTheme.colorScheme.primary)
+                                            Text(
+                                                saved.name,
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                maxLines = 1,
+                                            )
+                                        }
+                                        if (onDeleteSavedSearch != null) {
+                                            IconButton(
+                                                onClick = { onDeleteSavedSearch(saved.id) },
+                                                modifier = Modifier
+                                                    .size(48.dp)
+                                                    .testTag("saved_search_delete_${saved.id}"),
+                                            ) {
+                                                Icon(
+                                                    Icons.Filled.Close,
+                                                    stringResource(R.string.action_delete),
+                                                    Modifier.size(14.dp),
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (allTags.isNotEmpty() && onSelectTag != null) {
+                            Text(
+                                stringResource(R.string.search_tags_title),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                allTags.forEach { tag ->
+                                    FarFilterPill(
+                                        label = "#$tag",
+                                        selected = false,
+                                        onClick = { onSelectTag(tag) },
+                                        modifier = Modifier.testTag("search_tag_${tag.lowercase()}"),
+                                    )
+                                }
+                            }
+                        }
+
                         if (recent.isNotEmpty()) {
                             Row(
                                 Modifier.fillMaxWidth(),
@@ -700,19 +799,37 @@ fun SearchScreen(
                                 }
                             }
                             recent.forEach { r ->
-                                Text(
-                                    r,
+                                Row(
                                     Modifier
                                         .fillMaxWidth()
                                         .defaultMinSize(minHeight = 48.dp)
                                         .clip(RoundedCornerShape(12.dp))
                                         .clickable { onQuery(r); onSubmitQuery(r) }
-                                        .padding(vertical = 12.dp, horizontal = 10.dp),
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                )
+                                        .padding(start = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        r,
+                                        Modifier.weight(1f).padding(vertical = 12.dp),
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                    if (onRemoveRecent != null) {
+                                        IconButton(
+                                            onClick = { onRemoveRecent(r) },
+                                            modifier = Modifier.size(48.dp),
+                                        ) {
+                                            Icon(
+                                                Icons.Filled.Close,
+                                                stringResource(R.string.action_delete),
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(18.dp),
+                                            )
+                                        }
+                                    }
+                                }
                             }
-                        } else {
+                        } else if (savedSearches.isEmpty() && allTags.isEmpty()) {
                             Text(
                                 stringResource(R.string.search_tip),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -729,11 +846,12 @@ fun SearchScreen(
                             IndexStatus.LimitedAccess -> stringResource(R.string.search_empty_limited_body)
                             else -> stringResource(R.string.search_empty_body)
                         },
-                        primary = if (scope != SearchScope.All || dateRange != DateRangeFilter.Any || sizeFilter != SizeFilter.Any) {
+                        primary = if (scope != SearchScope.All || dateRange != DateRangeFilter.Any || sizeFilter != SizeFilter.Any || selectedTag != null) {
                             ErrorAction(stringResource(R.string.action_clear_all), true) {
                                 onScope(SearchScope.All)
                                 onDateRange(DateRangeFilter.Any)
                                 onSizeFilter(SizeFilter.Any)
+                                onSelectTag?.invoke(null)
                             }
                         } else null,
                     )
@@ -760,19 +878,36 @@ fun SearchScreen(
                         style = MaterialTheme.typography.displayLarge,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
-                    if (hasActiveFilter) {
-                        TextButton(
-                            onClick = {
-                                onQuery("")
-                                onScope(SearchScope.All)
-                                onDateRange(DateRangeFilter.Any)
-                                onSizeFilter(SizeFilter.Any)
-                            },
-                            modifier = Modifier
-                                .defaultMinSize(minHeight = 48.dp)
-                                .testTag("search_reset_filters"),
-                        ) {
-                            Text(stringResource(R.string.action_clear_all))
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (hasActiveFilter && onSaveSearch != null) {
+                            IconButton(
+                                onClick = { savingDialog = true },
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .testTag("search_save_button"),
+                            ) {
+                                Icon(
+                                    Icons.Filled.BookmarkBorder,
+                                    stringResource(R.string.search_save_current),
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                        }
+                        if (hasActiveFilter) {
+                            TextButton(
+                                onClick = {
+                                    onQuery("")
+                                    onScope(SearchScope.All)
+                                    onDateRange(DateRangeFilter.Any)
+                                    onSizeFilter(SizeFilter.Any)
+                                    onSelectTag?.invoke(null)
+                                },
+                                modifier = Modifier
+                                    .defaultMinSize(minHeight = 48.dp)
+                                    .testTag("search_reset_filters"),
+                            ) {
+                                Text(stringResource(R.string.action_clear_all))
+                            }
                         }
                     }
                 }
@@ -818,8 +953,18 @@ fun SearchScreen(
                         }
                     }
                 }
-                // 1-row quick scope pills + collapsible Filters drawer trigger
+                // 1-row quick scope pills + active tag + collapsible Filters drawer trigger
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (selectedTag != null && onSelectTag != null) {
+                        item(key = "active_tag_chip") {
+                            FarFilterPill(
+                                label = "#$selectedTag ×",
+                                selected = true,
+                                onClick = { onSelectTag(null) },
+                                modifier = Modifier.testTag("search_active_tag_pill"),
+                            )
+                        }
+                    }
                     items(SearchScope.entries, key = { it.name }) { s ->
                         FarFilterPill(
                             label = s.label,
@@ -870,8 +1015,67 @@ fun SearchScreen(
                             )
                         }
                     }
+                    if (allTags.isNotEmpty() && onSelectTag != null) {
+                        Text(
+                            stringResource(R.string.search_tags_title),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(allTags, key = { it }) { tag ->
+                                FarFilterPill(
+                                    label = "#$tag",
+                                    selected = tag == selectedTag,
+                                    onClick = { onSelectTag(if (tag == selectedTag) null else tag) },
+                                    modifier = Modifier.testTag("search_drawer_tag_${tag.lowercase()}"),
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
+    }
+
+    if (savingDialog && onSaveSearch != null) {
+        val suggested = remember(query, selectedTag, scope) {
+            when {
+                query.isNotBlank() -> query.trim()
+                selectedTag != null -> "#$selectedTag"
+                else -> scope.label
+            }
+        }
+        var label by remember(suggested) { mutableStateOf(suggested) }
+        AlertDialog(
+            onDismissRequest = { savingDialog = false },
+            title = { Text(stringResource(R.string.search_save_current)) },
+            text = {
+                OutlinedTextField(
+                    value = label,
+                    onValueChange = { label = it },
+                    label = { Text(stringResource(R.string.search_save_name_hint)) },
+                    singleLine = true,
+                    modifier = Modifier.testTag("search_save_name_input"),
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (label.isNotBlank()) {
+                            onSaveSearch(label.trim())
+                            savingDialog = false
+                        }
+                    },
+                    enabled = label.isNotBlank(),
+                    modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("search_save_confirm"),
+                ) { Text(stringResource(R.string.action_save)) }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { savingDialog = false },
+                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                ) { Text(stringResource(R.string.action_cancel)) }
+            },
+        )
     }
 }

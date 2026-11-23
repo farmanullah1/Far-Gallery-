@@ -55,11 +55,11 @@ import com.example.core.common.FarError
 import com.example.core.common.LocalDiagnostics
 import com.example.core.common.resolveSummary
 import com.example.core.common.resolveTitle
+import com.example.ui.glass.FarGlassState
 import com.example.ui.glass.GlassKind
 import com.example.ui.glass.glass
 import com.example.ui.theme.LocalReducedMotion
 import com.example.ui.theme.LocalSemanticColors
-import dev.chrisbanes.haze.HazeState
 
 /** Every screen exposes one of these. Errors are NEVER rendered as an empty state. */
 sealed interface UiState<out T> {
@@ -283,7 +283,7 @@ data class OperationUi(
 
 @Composable
 fun OperationProgressSheet(
-    glass: HazeState,
+    glass: FarGlassState,
     op: OperationUi,
     onCancel: () -> Unit,
     onTogglePause: () -> Unit = {},
@@ -335,7 +335,7 @@ fun OperationProgressSheet(
 /** Glass toast with optional action (Undo / View / OK). Host it at the bottom above the tab bar. */
 @Composable
 fun GlassToast(
-    glass: HazeState,
+    glass: FarGlassState,
     message: String,
     actionLabel: String? = null,
     onAction: () -> Unit = {},

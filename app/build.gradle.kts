@@ -63,7 +63,19 @@ android {
     compose = true
     buildConfig = true
   }
-  testOptions { unitTests { isIncludeAndroidResources = true } }
+  testOptions {
+    unitTests {
+      isIncludeAndroidResources = true
+      all {
+        it.forkEvery = 1L
+        it.systemProperty(
+          "robolectric.dependency.repo.url",
+          System.getProperty("robolectric.dependency.repo.url")
+            ?: "https://maven-central.storage-download.googleapis.com/maven2"
+        )
+      }
+    }
+  }
   packaging {
     jniLibs { useLegacyPackaging = false }
   }
@@ -123,7 +135,7 @@ dependencies {
   implementation(libs.androidx.room.runtime)
   implementation(libs.coil.compose)
   implementation(libs.coil.video)
-  implementation(libs.haze)
+  // implementation(libs.haze)
   // implementation(libs.converter.moshi)
   // implementation(libs.firebase.ai)
   // implementation(libs.firebase.firestore)

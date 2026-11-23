@@ -1,5 +1,6 @@
 package com.example.feature.files
 
+import android.text.format.Formatter
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -28,6 +29,7 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -37,6 +39,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
+import androidx.compose.material.icons.automirrored.filled.Sort
+import androidx.compose.material.icons.automirrored.filled.ViewList
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
@@ -44,16 +49,17 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderZip
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -62,6 +68,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
@@ -74,11 +81,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.lazy.LazyRow
+import coil.compose.AsyncImage
 import com.example.R
 import com.example.ui.components.FarFilterDrawer
 import com.example.ui.components.FarFilterPill
@@ -93,7 +102,8 @@ import com.example.ui.glass.glass
 import com.example.ui.glass.glassSource
 import com.example.ui.theme.FarSpacing
 import com.example.ui.theme.LocalSemanticColors
-import dev.chrisbanes.haze.HazeState
+import com.example.ui.theme.MonoFont
+import com.example.ui.glass.FarGlassState
 
 @Immutable
 data class FileEntry(
@@ -108,6 +118,8 @@ data class FileEntry(
     val canDelete: Boolean,
     val canMove: Boolean,
     val isStarred: Boolean = false,
+    val contentUri: String? = null,
+    val subtitlePath: String? = null,
 )
 
 @Immutable
@@ -135,6 +147,11 @@ data class FilesUiState(
     val searchQuery: String = "",
     val selection: Set<String> = emptySet(),
     val clipboardCount: Int = 0,
+    val searchSubfolders: Boolean = false,
+    val searchScanning: Boolean = false,
+    val isCurrentPinned: Boolean = false,
+    val folderSummary: Pair<Int, Long>? = null,
+    val refreshing: Boolean = false,
 )
 
 interface FilesActions {
@@ -154,11 +171,14 @@ interface FilesActions {
     fun contextAction(e: FileEntry, action: String)
     fun retry()
     fun paste()
+    fun toggleSearchSubfolders() {}
+    fun togglePinCurrent() {}
+    fun refresh() {}
 }
 
 /** Phone = Apple Files (Locations + push navigation). >= 840dp = Ubuntu Files (sidebar + path bar + columns). */
 @Composable
-fun FilesScreen(state: FilesUiState, actions: FilesActions, glass: HazeState, modifier: Modifier = Modifier) {
+fun FilesScreen(state: FilesUiState, actions: FilesActions, glass: FarGlassState, modifier: Modifier = Modifier) {
     BackHandler(enabled = state.selectedPlaceId != null) {
         actions.up()
     }
@@ -171,7 +191,8 @@ fun FilesScreen(state: FilesUiState, actions: FilesActions, glass: HazeState, mo
 
 /* ------------------------------ Phone (Apple Files) ------------------------------ */
 @Composable
-private fun PhoneLayout(state: FilesUiState, a: FilesActions, glass: HazeState) {
+private fun PhoneLayout(state: FilesUiState, a: FilesActions, glass: FarGlassState) {
+    val ctx = LocalContext.current
     val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     if (state.selectedPlaceId == null) {
@@ -195,7 +216,7 @@ private fun PhoneLayout(state: FilesUiState, a: FilesActions, glass: HazeState) 
                     )
                 }
                 items(state.places, key = { it.id }) { p -> PlaceRow(p) { a.openPlace(p.id) } }
-                if (state.places.none { it.id != "add" && it.id != "starred" }) {
+                if (state.places.none { it.id != "add" && it.id != "starred" && !it.id.startsWith("pin_") }) {
                     item(key = "locations_empty") {
                         EmptyState(
                             Icons.Filled.Folder,
@@ -240,18 +261,40 @@ private fun PhoneLayout(state: FilesUiState, a: FilesActions, glass: HazeState) 
                             tint = MaterialTheme.colorScheme.onSurface,
                         )
                     }
-                    Text(
-                        if (state.selection.isNotEmpty()) stringResource(R.string.selected_count, state.selection.size)
-                        else state.crumbs.lastOrNull() ?: stringResource(R.string.nav_files),
-                        Modifier.weight(1f),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            if (state.selection.isNotEmpty()) stringResource(R.string.selected_count, state.selection.size)
+                            else state.crumbs.lastOrNull() ?: stringResource(R.string.nav_files),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        state.folderSummary?.let { (count, bytes) ->
+                            Text(
+                                stringResource(R.string.files_folder_summary, count, Formatter.formatFileSize(ctx, bytes)),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
                     if (state.clipboardCount > 0) {
                         TextButton(onClick = a::paste, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) {
                             Text(stringResource(R.string.action_paste, state.clipboardCount))
+                        }
+                    }
+                    if (state.selectedPlaceId != "starred") {
+                        IconButton(
+                            onClick = a::togglePinCurrent,
+                            modifier = Modifier.size(48.dp).testTag("files_pin_button"),
+                        ) {
+                            Icon(
+                                if (state.isCurrentPinned) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
+                                stringResource(if (state.isCurrentPinned) R.string.files_unpin_folder else R.string.files_pin_folder),
+                                tint = if (state.isCurrentPinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                            )
                         }
                     }
                     IconButton(
@@ -259,7 +302,7 @@ private fun PhoneLayout(state: FilesUiState, a: FilesActions, glass: HazeState) 
                             searching = !searching
                             if (!searching) a.setSearch("")
                         },
-                        modifier = Modifier.size(48.dp),
+                        modifier = Modifier.size(48.dp).testTag("files_search_toggle_button"),
                     ) {
                         Icon(
                             if (searching) Icons.Filled.Close else Icons.Filled.Search,
@@ -269,7 +312,7 @@ private fun PhoneLayout(state: FilesUiState, a: FilesActions, glass: HazeState) 
                     }
                     Box {
                         IconButton(onClick = { sortOpen = true }, modifier = Modifier.size(48.dp).testTag("files_sort_button")) {
-                            Icon(Icons.Filled.Sort, "Sort", tint = MaterialTheme.colorScheme.onSurface)
+                            Icon(Icons.AutoMirrored.Filled.Sort, stringResource(R.string.filter_sort), tint = MaterialTheme.colorScheme.onSurface)
                         }
                         DropdownMenu(expanded = sortOpen, onDismissRequest = { sortOpen = false }) {
                             SortColumn.entries.forEach { col ->
@@ -284,7 +327,7 @@ private fun PhoneLayout(state: FilesUiState, a: FilesActions, glass: HazeState) 
                     ViewToggle(state.view, a::setView)
                     if (state.selectedPlaceId != "starred") {
                         IconButton(onClick = a::newFolder, modifier = Modifier.size(48.dp).testTag("files_new_folder_button")) {
-                            Icon(Icons.Filled.CreateNewFolder, "New folder", tint = MaterialTheme.colorScheme.onSurface)
+                            Icon(Icons.Filled.CreateNewFolder, stringResource(R.string.files_new_folder), tint = MaterialTheme.colorScheme.onSurface)
                         }
                     }
                 }
@@ -315,9 +358,9 @@ private fun PhoneLayout(state: FilesUiState, a: FilesActions, glass: HazeState) 
                     }
                     item(key = "files_view_pill") {
                         FarFilterPill(
-                            label = if (state.view == FilesView.Grid) "Grid" else "List",
+                            label = stringResource(if (state.view == FilesView.Grid) R.string.files_grid_view else R.string.files_list_view),
                             selected = state.view == FilesView.Grid,
-                            leadingIcon = if (state.view == FilesView.Grid) Icons.Filled.GridView else Icons.Filled.ViewList,
+                            leadingIcon = if (state.view == FilesView.Grid) Icons.Filled.GridView else Icons.AutoMirrored.Filled.ViewList,
                             onClick = { a.setView(if (state.view == FilesView.Grid) FilesView.List else FilesView.Grid) },
                             modifier = Modifier.testTag("files_view_pill"),
                         )
@@ -350,16 +393,46 @@ private fun PhoneLayout(state: FilesUiState, a: FilesActions, glass: HazeState) 
                 }
 
                 if (searching) {
-                    OutlinedTextField(
-                        value = state.searchQuery,
-                        onValueChange = a::setSearch,
-                        placeholder = { Text(stringResource(R.string.files_filter_hint)) },
-                        singleLine = true,
-                        modifier = Modifier
+                    Column(
+                        Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = FarSpacing.screenPadding, vertical = 4.dp)
-                            .testTag("files_folder_search_input"),
-                    )
+                            .padding(horizontal = FarSpacing.screenPadding, vertical = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        OutlinedTextField(
+                            value = state.searchQuery,
+                            onValueChange = a::setSearch,
+                            placeholder = { Text(stringResource(R.string.files_filter_hint)) },
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("files_folder_search_input"),
+                        )
+                        if (state.selectedPlaceId != "starred") {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                FarFilterPill(
+                                    label = stringResource(R.string.files_this_folder),
+                                    selected = !state.searchSubfolders,
+                                    onClick = { if (state.searchSubfolders) a.toggleSearchSubfolders() },
+                                    modifier = Modifier.testTag("files_scope_this_folder"),
+                                )
+                                FarFilterPill(
+                                    label = stringResource(R.string.files_all_subfolders),
+                                    selected = state.searchSubfolders,
+                                    onClick = { if (!state.searchSubfolders) a.toggleSearchSubfolders() },
+                                    modifier = Modifier.testTag("files_scope_subfolders"),
+                                )
+                            }
+                        }
+                        if (state.searchScanning) {
+                            LinearProgressIndicator(Modifier.fillMaxWidth())
+                            Text(
+                                stringResource(R.string.files_search_scanning),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                 }
                 EntriesPane(state, a, Modifier.weight(1f).glassSource(glass), showColumns = false)
             }
@@ -384,6 +457,12 @@ private fun PhoneLayout(state: FilesUiState, a: FilesActions, glass: HazeState) 
                     TextButton(onClick = a::selectAll, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) {
                         Text(stringResource(R.string.batch_all))
                     }
+                    TextButton(
+                        onClick = { a.batchAction("share") },
+                        modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("files_batch_share"),
+                    ) {
+                        Text(stringResource(R.string.action_share))
+                    }
                     TextButton(onClick = { a.batchAction("copy") }, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) {
                         Text(stringResource(R.string.action_copy))
                     }
@@ -404,7 +483,7 @@ private fun PhoneLayout(state: FilesUiState, a: FilesActions, glass: HazeState) 
 
 /* ------------------------------ Desktop / tablet (Ubuntu Files) ------------------------------ */
 @Composable
-private fun DesktopLayout(state: FilesUiState, a: FilesActions, glass: HazeState) {
+private fun DesktopLayout(state: FilesUiState, a: FilesActions, glass: FarGlassState) {
     Row(Modifier.fillMaxSize()) {
         Column(
             Modifier
@@ -416,7 +495,7 @@ private fun DesktopLayout(state: FilesUiState, a: FilesActions, glass: HazeState
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             Text(
-                "Places",
+                stringResource(R.string.files_locations),
                 Modifier.padding(8.dp),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -470,13 +549,22 @@ private fun DesktopLayout(state: FilesUiState, a: FilesActions, glass: HazeState
                         Text(stringResource(R.string.action_paste, state.clipboardCount))
                     }
                 }
+                if (state.selectedPlaceId != null && state.selectedPlaceId != "starred") {
+                    IconButton(onClick = a::togglePinCurrent, modifier = Modifier.size(48.dp)) {
+                        Icon(
+                            if (state.isCurrentPinned) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
+                            stringResource(if (state.isCurrentPinned) R.string.files_unpin_folder else R.string.files_pin_folder),
+                            tint = if (state.isCurrentPinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
                 TextButton(onClick = a::toggleHidden, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) {
-                    Text(if (state.showHidden) "Hide hidden" else "Show hidden")
+                    Text(stringResource(R.string.filter_hidden_files))
                 }
                 ViewToggle(state.view, a::setView)
                 if (state.selectedPlaceId != null && state.selectedPlaceId != "starred") {
                     IconButton(onClick = a::newFolder, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.Filled.CreateNewFolder, "New folder", tint = MaterialTheme.colorScheme.onSurface)
+                        Icon(Icons.Filled.CreateNewFolder, stringResource(R.string.files_new_folder), tint = MaterialTheme.colorScheme.onSurface)
                     }
                 }
             }
@@ -525,18 +613,23 @@ private fun ViewToggle(view: FilesView, onChange: (FilesView) -> Unit) {
         modifier = Modifier.size(48.dp),
     ) {
         Icon(
-            if (view == FilesView.Grid) Icons.Filled.ViewList else Icons.Filled.GridView,
-            if (view == FilesView.Grid) "List view" else "Grid view",
+            if (view == FilesView.Grid) Icons.AutoMirrored.Filled.ViewList else Icons.Filled.GridView,
+            stringResource(if (view == FilesView.Grid) R.string.files_list_view else R.string.files_grid_view),
             tint = MaterialTheme.colorScheme.onSurface,
         )
     }
 }
 
 /* ------------------------------ Entries ------------------------------ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EntriesPane(state: FilesUiState, a: FilesActions, modifier: Modifier, showColumns: Boolean) {
     val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-    Box(modifier) {
+    PullToRefreshBox(
+        isRefreshing = state.refreshing,
+        onRefresh = a::refresh,
+        modifier = modifier,
+    ) {
         when (val s = state.entries) {
             UiState.Loading -> Column(
                 Modifier.padding(top = 12.dp).fillMaxSize(),
@@ -607,27 +700,60 @@ private fun EntryRow(e: FileEntry, selected: Boolean, a: FilesActions) {
         Row(
             Modifier
                 .fillMaxWidth()
+                .defaultMinSize(minHeight = 56.dp)
                 .background(if (selected) MaterialTheme.colorScheme.primary.copy(0.14f) else Color.Transparent)
                 .combinedClickable(onClick = { a.openEntry(e) }, onLongClick = { menu = true })
-                .padding(horizontal = 16.dp, vertical = 10.dp),
+                .padding(start = 16.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(Modifier.weight(4f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                FileIcon(e)
-                Text(
-                    e.name,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                if (e.isStarred) Icon(Icons.Filled.Star, "Starred", Modifier.size(14.dp), tint = Color(0xFFFF9F0A))
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                FileIcon(e, 36.dp)
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            e.name,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        if (e.isStarred) Icon(Icons.Filled.Star, stringResource(R.string.files_star), Modifier.size(14.dp), tint = Color(0xFFFF9F0A))
+                    }
+                    val meta = buildString {
+                        e.subtitlePath?.let {
+                            append(it)
+                            append(" · ")
+                        }
+                        append(e.sizeBytes?.let(::humanSize) ?: e.typeLabel)
+                        e.modifiedLabel?.let {
+                            append(" · ")
+                            append(it)
+                        }
+                    }
+                    Text(
+                        meta,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.labelMedium.copy(fontFamily = MonoFont),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
-            Text(e.sizeBytes?.let(::humanSize) ?: "—", Modifier.weight(1.2f), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(e.typeLabel, Modifier.weight(1.5f), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-            Text(e.modifiedLabel ?: "—", Modifier.weight(2f), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            Box {
+                IconButton(
+                    onClick = { menu = true },
+                    modifier = Modifier.size(48.dp).testTag("file_more_${e.id}"),
+                ) {
+                    Icon(
+                        Icons.Filled.MoreVert,
+                        stringResource(R.string.files_more_options, e.name),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                EntryMenu(menu, { menu = false }, e, a)
+            }
         }
-        EntryMenu(menu, { menu = false }, e, a)
     }
 }
 
@@ -638,16 +764,32 @@ private fun EntryTile(e: FileEntry, selected: Boolean, a: FilesActions) {
     Box {
         Column(
             Modifier
+                .fillMaxWidth()
                 .clip(RoundedCornerShape(14.dp))
                 .background(if (selected) MaterialTheme.colorScheme.primary.copy(0.14f) else Color.Transparent)
                 .combinedClickable(onClick = { a.openEntry(e) }, onLongClick = { menu = true })
                 .padding(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            FileIcon(e, 56.dp)
+            Box(Modifier.fillMaxWidth()) {
+                Box(Modifier.align(Alignment.Center).padding(top = 6.dp)) {
+                    FileIcon(e, 60.dp)
+                }
+                IconButton(
+                    onClick = { menu = true },
+                    modifier = Modifier.align(Alignment.TopEnd).size(48.dp),
+                ) {
+                    Icon(
+                        Icons.Filled.MoreVert,
+                        stringResource(R.string.files_more_options, e.name),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
             Text(
                 e.name,
-                Modifier.padding(top = 6.dp),
+                Modifier.padding(top = 4.dp),
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.labelMedium,
@@ -660,17 +802,17 @@ private fun EntryTile(e: FileEntry, selected: Boolean, a: FilesActions) {
 
 @Composable
 private fun EntryMenu(open: Boolean, dismiss: () -> Unit, e: FileEntry, a: FilesActions) {
-    val isZip = !e.isDirectory && (e.mime == "application/zip" || e.name.endsWith(".zip", ignoreCase = true))
+    val isZip = !e.isDirectory && (e.mime == "application/zip" || e.mime == "application/x-zip-compressed" || e.name.endsWith(".zip", ignoreCase = true))
     DropdownMenu(expanded = open, onDismissRequest = dismiss) {
         val entries = buildList {
-            add(Triple("Open", "open", true))
-            add(Triple("Share", "share", !e.isDirectory))
-            add(Triple("Copy", "copy", true))
-            add(Triple("Move", "move", e.canMove))
+            add(Triple(stringResource(R.string.action_open), "open", true))
+            add(Triple(stringResource(R.string.action_share), "share", !e.isDirectory))
+            add(Triple(stringResource(R.string.action_copy), "copy", true))
+            add(Triple(stringResource(R.string.action_move), "move", e.canMove))
             add(Triple(stringResource(R.string.action_rename), "rename", e.canRename))
-            add(Triple(if (e.isStarred) "Unstar" else "Star", "star", true))
-            if (isZip) add(Triple("Extract ZIP here", "extract", true))
-            add(Triple("Properties", "properties", true))
+            add(Triple(stringResource(if (e.isStarred) R.string.files_unstar else R.string.files_star), "star", true))
+            if (isZip) add(Triple(stringResource(R.string.files_extract_zip), "extract", true))
+            add(Triple(stringResource(R.string.files_properties), "properties", true))
             add(Triple(stringResource(R.string.action_delete), "delete", e.canDelete))
         }
         entries.forEach { (label, key, enabled) ->
@@ -681,7 +823,7 @@ private fun EntryMenu(open: Boolean, dismiss: () -> Unit, e: FileEntry, a: Files
             )
         }
         DropdownMenuItem(
-            text = { Text("Select", color = MaterialTheme.colorScheme.onSurface) },
+            text = { Text(stringResource(R.string.files_select), color = MaterialTheme.colorScheme.onSurface) },
             onClick = { dismiss(); a.toggleSelect(e) },
         )
     }
@@ -689,11 +831,22 @@ private fun EntryMenu(open: Boolean, dismiss: () -> Unit, e: FileEntry, a: Files
 
 @Composable
 private fun FileIcon(e: FileEntry, size: androidx.compose.ui.unit.Dp = 28.dp) {
+    val isThumbMedia = !e.isDirectory && e.contentUri != null &&
+        (e.mime?.startsWith("image/") == true || e.mime?.startsWith("video/") == true)
+    if (isThumbMedia) {
+        AsyncImage(
+            model = e.contentUri,
+            contentDescription = e.name,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.size(size).clip(RoundedCornerShape(8.dp)),
+        )
+        return
+    }
     val (icon, tint) = when {
         e.isDirectory -> Icons.Filled.Folder to Color(0xFF4DA3FF)
         e.mime?.startsWith("image/") == true -> Icons.Filled.Image to Color(0xFF30D158)
         e.mime?.startsWith("video/") == true -> Icons.Filled.Movie to Color(0xFFBF5AF2)
-        e.mime == "application/zip" || e.name.endsWith(".zip", ignoreCase = true) -> Icons.Filled.FolderZip to Color(0xFFFF9F0A)
+        e.mime == "application/zip" || e.mime == "application/x-zip-compressed" || e.name.endsWith(".zip", ignoreCase = true) -> Icons.Filled.FolderZip to Color(0xFFFF9F0A)
         else -> Icons.AutoMirrored.Filled.InsertDriveFile to MaterialTheme.colorScheme.onSurfaceVariant
     }
     Icon(icon, null, Modifier.size(size), tint = tint)
@@ -705,6 +858,7 @@ private fun PlaceRow(p: Place, onClick: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
+            .defaultMinSize(minHeight = 56.dp)
             .clip(RoundedCornerShape(16.dp))
             .background(semantic.elevatedSurface)
             .border(0.75.dp, semantic.cardBorder, RoundedCornerShape(16.dp))

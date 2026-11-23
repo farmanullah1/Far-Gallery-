@@ -265,4 +265,140 @@
     <string name="error_boundary_body">Your photos and files are safe. Recover cleanly or go back.</string>
     <string name="error_boundary_reset">Recover view</string>
     <string name="error_boundary_back">Go back</string>
+
+    <!-- Pro Camera & QR Action Sheet -->
+    <string name="camera_mode_video">VIDEO</string>
+    <string name="camera_mode_photo">PHOTO</string>
+    <string name="camera_mode_square">SQUARE</string>
+    <string name="camera_mode_scan">SCAN</string>
+    <string name="camera_timer_off">Timer Off</string>
+    <string name="camera_timer_sec">%1$ds</string>
+    <string name="camera_grid">Grid</string>
+    <string name="camera_level">Level</string>
+    <string name="camera_qr">QR</string>
+    <string name="camera_burst">Burst</string>
+    <string name="camera_burst_counter">Burst · %1$d</string>
+    <string name="camera_ae_af_locked">AE/AF LOCK</string>
+    <string name="camera_ae_af_tap_unlock">Tap to unlock</string>
+    <string name="camera_scan_edit">Edit scan</string>
+    <string name="camera_qr_url">Web link</string>
+    <string name="camera_qr_wifi">Wi-Fi network</string>
+    <string name="camera_qr_phone">Phone number</string>
+    <string name="camera_qr_email">Email address</string>
+    <string name="camera_qr_contact">Contact card</string>
+    <string name="camera_qr_text">QR text</string>
+    <string name="camera_qr_copy_password">Copy password</string>
+    <string name="camera_qr_dial">Dial</string>
+    <string name="camera_qr_email_action">Send email</string>
+    <string name="cd_close_camera">Close camera</string>
+    <string name="cd_camera_options_show">Show camera options</string>
+    <string name="cd_camera_options_hide">Hide camera options</string>
+    <string name="cd_open_last_capture">Open last capture</string>
+    <string name="cd_switch_camera">Switch camera</string>
+    <string name="cd_take_photo">Take photo</string>
+    <string name="cd_start_recording">Start recording</string>
+    <string name="cd_stop_recording">Stop recording</string>
+
+    <!-- Photo Editor & Video Trimmer -->
+    <string name="editor_tab_adjust">Adjust</string>
+    <string name="editor_tab_presets">Presets</string>
+    <string name="editor_tab_crop">Crop</string>
+    <string name="editor_tab_rotate">Rotate</string>
+    <string name="editor_brightness">Brightness</string>
+    <string name="editor_contrast">Contrast</string>
+    <string name="editor_saturation">Saturation</string>
+    <string name="editor_warmth">Warmth</string>
+    <string name="editor_vignette">Vignette</string>
+    <string name="editor_rotate_left">Rotate left</string>
+    <string name="editor_rotate_right">Rotate right</string>
+    <string name="editor_flip">Flip</string>
+    <string name="editor_strip_exif_on">Strip EXIF: On</string>
+    <string name="editor_strip_exif_off">EXIF: Keep</string>
+    <string name="editor_preset_original">Original</string>
+    <string name="editor_preset_vivid">Vivid</string>
+    <string name="editor_preset_warm_film">Warm Film</string>
+    <string name="editor_preset_matte">Matte</string>
+    <string name="editor_preset_cool_crisp">Cool Crisp</string>
+    <string name="editor_preset_noir">Noir B&amp;W</string>
+    <string name="editor_preset_doc_scan">Doc Scan</string>
+    <string name="editor_preset_golden_hour">Golden</string>
+    <string name="video_trim_title">Trim &amp; Export Copy</string>
+    <string name="video_trim_speed">Export speed</string>
+    <string name="video_trim_mute">Mute audio in exported copy</string>
+    <string name="video_trim_untouched_note">Saved as a new copy. The original stays untouched.</string>
+    <string name="video_save_frame">Save frame</string>
+    <string name="video_pip">Picture in picture</string>
+    <string name="video_back_10s">Back 10s</string>
+    <string name="video_forward_10s">Forward 10s</string>
+
+    <!-- Quick Share Presets -->
+    <string name="share_presets_title">Quick Share Options</string>
+    <string name="share_preset_original">Original quality</string>
+    <string name="share_preset_original_sub">Share unmodified source file(s)</string>
+    <string name="share_preset_clean">Privacy clean (Strip GPS &amp; EXIF)</string>
+    <string name="share_preset_clean_sub">Removes location, camera model, and timestamps</string>
+    <string name="share_preset_compact">Compact 1600px JPEG (EXIF stripped)</string>
+    <string name="share_preset_compact_sub">Smaller size for fast sharing without metadata</string>
+    <string name="share_preset_messaging">Messaging 1080px JPEG (EXIF stripped)</string>
+    <string name="share_preset_messaging_sub">Lightweight copy ideal for chat apps</string>
+
+    <!-- Duplicates & Storage Analyzer -->
+    <string name="dup_reclaimable_summary">%1$d group(s) · %2$s reclaimable</string>
+    <string name="dup_smart_select">Smart select copies</string>
+    <string name="dup_clear_marks">Clear selection</string>
+    <string name="dup_identical_copies">%1$d identical copies</string>
+    <string name="dup_no_title">No exact duplicates</string>
+    <string name="dup_no_body">Every photo and video in your library has unique contents.</string>
+    <string name="storage_breakdown">Library Breakdown</string>
+    <string name="storage_large_files">Large Files</string>
+    <string name="storage_filter_all">All</string>
+    <string name="storage_filter_videos">Videos</string>
+    <string name="storage_filter_camera">Camera</string>
+    <string name="storage_filter_screenshots">Screenshots</string>
+    <string name="storage_filter_other">Other</string>
+    <string name="storage_trash_selected">Trash selected (%1$d)</string>
+
+    <!-- Far Files Upgrades -->
+    <string name="files_this_folder">This folder</string>
+    <string name="files_all_subfolders">Subfolders</string>
+    <string name="files_pin_folder">Pin shortcut</string>
+    <string name="files_unpin_folder">Unpin shortcut</string>
+    <string name="files_pinned_saved">Pinned to Places</string>
+    <string name="files_pinned_removed">Removed from Places</string>
+    <string name="files_folder_summary">%1$d items · %2$s</string>
+    <string name="files_list_view">List view</string>
+    <string name="files_grid_view">Grid view</string>
+    <string name="files_new_folder">New folder</string>
+    <string name="files_extract_zip">Extract ZIP here</string>
+    <string name="files_properties">Properties</string>
+    <string name="files_select">Select</string>
+    <string name="files_star">Star</string>
+    <string name="files_unstar">Unstar</string>
+    <string name="files_zip_preview_entries">%1$d entries inside archive</string>
+    <string name="files_zip_preview_unsafe">Blocked unsafe archive entry detected</string>
+    <string name="files_pdf_page_count">%1$d pages</string>
+    <string name="files_search_scanning">Searching subfolders…</string>
+    <string name="files_more_options">More options for %1$s</string>
+    <string name="files_compute_sha256">Compute SHA-256</string>
+    <string name="files_computing_sha256">Computing SHA-256…</string>
+    <string name="files_copy_sha256">Copy SHA-256</string>
+    <string name="files_sha256_copied">SHA-256 copied</string>
+
+    <!-- Smart Organization, Editor Recipes, PDF & EV Reset -->
+    <string name="collection_recent">Recently Viewed</string>
+    <string name="search_saved_title">Saved searches</string>
+    <string name="search_save_current">Save search</string>
+    <string name="search_save_name_hint">Search name</string>
+    <string name="search_tags_title">Tags</string>
+    <string name="gallery_select_group">Select group</string>
+    <string name="gallery_deselect_group">Deselect</string>
+    <string name="editor_straighten">Straighten</string>
+    <string name="editor_copy_edits">Copy edits</string>
+    <string name="editor_paste_edits">Paste edits</string>
+    <string name="editor_edits_copied">Edits copied</string>
+    <string name="editor_reset_crop">Reset crop</string>
+    <string name="viewer_export_pdf">Export PDF</string>
+    <string name="viewer_pdf_saved">Saved PDF to Downloads/Far Gallery</string>
+    <string name="viewer_pdf_failed">Couldn\'t export PDF</string>
+    <string name="camera_ev_reset_hint">Hold EV badge to reset to 0.0</string>
 </resources>

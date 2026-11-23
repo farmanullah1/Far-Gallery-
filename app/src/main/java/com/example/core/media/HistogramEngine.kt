@@ -69,8 +69,11 @@ data class HistogramData(
 
 object HistogramEngine {
     private const val BINS = 64
+    private val cache = android.util.LruCache<String, HistogramData>(32)
 
     suspend fun fromUri(ctx: Context, uri: Uri): HistogramData? = withContext(Dispatchers.Default) {
+        val key = uri.toString()
+        synchronized(cache) { cache.get(key) }?.let { return@withContext it }
         runCatching {
             val bmp = withContext(Dispatchers.IO) {
                 val src = ImageDecoder.createSource(ctx.contentResolver, uri)
@@ -88,7 +91,9 @@ object HistogramEngine {
                 }
             }
             try {
-                compute(bmp, null)
+                compute(bmp, null).also { result ->
+                    synchronized(cache) { cache.put(key, result) }
+                }
             } finally {
                 bmp.recycle()
             }

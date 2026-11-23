@@ -37,6 +37,26 @@ data class DocEntry(
 
 enum class Collision { Rename, Replace, Skip }
 
+data class SearchHit(
+    val entry: DocEntry,
+    val relPath: String,
+    val breadcrumb: List<Pair<String, String>>,
+)
+
+data class ZipEntrySummary(
+    val path: String,
+    val isDir: Boolean,
+    val sizeBytes: Long,
+    val safe: Boolean,
+)
+
+data class ZipInspection(
+    val entries: List<ZipEntrySummary>,
+    val totalUncompressedBytes: Long,
+    val hasUnsafeEntries: Boolean,
+    val truncated: Boolean,
+)
+
 sealed interface OpEvent {
     data class Progress(val done: Int, val total: Int, val current: String) : OpEvent
     data class Finished(val done: Int, val skipped: List<String>, val failed: List<Pair<String, FarError>>) : OpEvent
@@ -73,6 +93,72 @@ class DocumentOps(private val r: ContentResolver) {
         } ?: throw IllegalStateException("provider returned null")
         out
     }
+
+    fun inspectDoc(documentUri: Uri): DocEntry? = runCatching {
+        r.query(documentUri, projection, null, null, null)?.use { c ->
+            if (!c.moveToFirst()) null
+            else DocEntry(
+                docId = c.getString(0),
+                name = c.getString(1).orEmpty(),
+                mime = c.getString(2).orEmpty(),
+                size = if (c.isNull(3)) null else c.getLong(3),
+                modified = if (c.isNull(4)) null else c.getLong(4),
+                flags = c.getInt(5),
+            )
+        }
+    }.getOrNull()
+
+    /**
+     * Bounded, cancellable BFS across subfolders of [startDocId].
+     * Emits cumulative matches periodically so large SD trees stay responsive.
+     */
+    fun searchRecursive(
+        tree: Uri,
+        startDocId: String,
+        startLabel: String,
+        query: String,
+        showHidden: Boolean,
+        maxDepth: Int = 5,
+        maxResults: Int = 200,
+    ): Flow<List<SearchHit>> = flow {
+        val needle = query.trim()
+        if (needle.isEmpty()) {
+            emit(emptyList())
+            return@flow
+        }
+        data class Node(val docId: String, val relPath: String, val crumbs: List<Pair<String, String>>, val depth: Int)
+        val queue = ArrayDeque<Node>()
+        queue.addLast(Node(startDocId, "", listOf(startDocId to startLabel), 0))
+        val hits = ArrayList<SearchHit>()
+        var lastEmitCount = 0
+
+        while (queue.isNotEmpty() && hits.size < maxResults) {
+            currentCoroutineContext().ensureActive()
+            val cur = queue.removeFirst()
+            val children = (list(tree, cur.docId) as? FarResult.Ok)?.value ?: continue
+            for (child in children) {
+                currentCoroutineContext().ensureActive()
+                if (!showHidden && child.name.startsWith(".")) continue
+                val childRel = if (cur.relPath.isEmpty()) child.name else "${cur.relPath}/${child.name}"
+                if (child.name.contains(needle, ignoreCase = true)) {
+                    hits += SearchHit(
+                        entry = child,
+                        relPath = cur.relPath.ifEmpty { startLabel },
+                        breadcrumb = cur.crumbs + (child.docId to child.name),
+                    )
+                    if (hits.size - lastEmitCount >= 12) {
+                        lastEmitCount = hits.size
+                        emit(hits.toList())
+                    }
+                    if (hits.size >= maxResults) break
+                }
+                if (child.isDir && cur.depth < maxDepth) {
+                    queue.addLast(Node(child.docId, childRel, cur.crumbs + (child.docId to child.name), cur.depth + 1))
+                }
+            }
+        }
+        emit(hits.toList())
+    }.flowOn(Dispatchers.IO)
 
     fun create(tree: Uri, parentDocId: String, mime: String, name: String): FarResult<String> = farCatching {
         val u = DocumentsContract.createDocument(r, docUri(tree, parentDocId), mime, name)
@@ -160,8 +246,10 @@ class DocumentOps(private val r: ContentResolver) {
         val created = create(dstTree, parent, f.mime.ifEmpty { "application/octet-stream" }, name)
         val newId = (created as? FarResult.Ok)?.value ?: return (created as FarResult.Err)
         val res = farCatching {
-            r.openInputStream(docUri(srcTree, f.docId))!!.use { i ->
-                r.openOutputStream(docUri(dstTree, newId))!!.use { o -> i.copyTo(o) }
+            val input = r.openInputStream(docUri(srcTree, f.docId)) ?: throw java.io.IOException("openInputStream returned null")
+            input.use { i ->
+                val output = r.openOutputStream(docUri(dstTree, newId)) ?: throw java.io.IOException("openOutputStream returned null")
+                output.use { o -> i.copyTo(o) }
             }
             val got = r.query(docUri(dstTree, newId), arrayOf(Document.COLUMN_SIZE), null, null, null)?.use {
                 if (it.moveToFirst()) it.getLong(0) else -1L
@@ -211,7 +299,8 @@ class DocumentOps(private val r: ContentResolver) {
 
         var count = 0
         try {
-            r.openInputStream(docUri(tree, zipEntry.docId))!!.use { input ->
+            val zipInput = r.openInputStream(docUri(tree, zipEntry.docId)) ?: throw java.io.IOException("openInputStream returned null")
+            zipInput.use { input ->
                 SafeZip.extract(input, zipEntry.size ?: 0L) { path, isDir, data ->
                     if (isDir) {
                         if (path.isNotEmpty()) ensureDir(path)
@@ -222,7 +311,8 @@ class DocumentOps(private val r: ContentResolver) {
                         val parentId = ensureDir(parentRel)
                         val docId = (create(tree, parentId, "application/octet-stream", fileName) as? FarResult.Ok)?.value
                             ?: throw java.io.IOException("create extracted file failed")
-                        r.openOutputStream(docUri(tree, docId))!!.use { out -> data.copyTo(out) }
+                        val fileOut = r.openOutputStream(docUri(tree, docId)) ?: throw java.io.IOException("openOutputStream returned null")
+                        fileOut.use { out -> data.copyTo(out) }
                         count++
                     }
                 }
@@ -264,7 +354,8 @@ class DocumentOps(private val r: ContentResolver) {
         items.forEach { collect(it, "", queue) }
 
         try {
-            r.openOutputStream(docUri(tree, docId))!!.use { out ->
+            val outStream = r.openOutputStream(docUri(tree, docId)) ?: throw java.io.IOException("openOutputStream returned null")
+            outStream.use { out ->
                 var done = 0
                 SafeZip.create(
                     entries = queue.asSequence().map { (path, entry) ->
@@ -283,6 +374,11 @@ class DocumentOps(private val r: ContentResolver) {
             throw t
         }
         finalName
+    }
+
+    fun inspectZip(uri: Uri): FarResult<ZipInspection> = farCatching {
+        val input = r.openInputStream(uri) ?: throw java.io.IOException("openInputStream returned null")
+        input.use { SafeZip.inspect(it) }
     }
 }
 
@@ -375,5 +471,38 @@ object SafeZip {
             }
         }
         return count
+    }
+
+    /** Reads ZIP table of contents without writing anything to storage, validating every path for traversal safety. */
+    fun inspect(input: InputStream, maxEntries: Int = 500): ZipInspection {
+        val list = ArrayList<ZipEntrySummary>()
+        var total = 0L
+        var unsafe = false
+        var truncated = false
+        ZipInputStream(input).use { z ->
+            while (true) {
+                val e = z.nextEntry ?: break
+                if (list.size >= maxEntries) {
+                    truncated = true
+                    break
+                }
+                val safePath = sanitize(e.name)
+                if (safePath == null) unsafe = true
+                val declaredSize = e.size.coerceAtLeast(0L)
+                if (!e.isDirectory) total += declaredSize
+                list += ZipEntrySummary(
+                    path = safePath ?: e.name,
+                    isDir = e.isDirectory,
+                    sizeBytes = declaredSize,
+                    safe = safePath != null,
+                )
+            }
+        }
+        return ZipInspection(
+            entries = list,
+            totalUncompressedBytes = total,
+            hasUnsafeEntries = unsafe,
+            truncated = truncated,
+        )
     }
 }

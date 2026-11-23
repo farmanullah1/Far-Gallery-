@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.PhotoAlbum
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.RestoreFromTrash
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Share
@@ -47,6 +48,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.InputChip
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -62,6 +64,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -76,6 +79,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.example.R
+import com.example.core.common.FarResult
 import com.example.core.common.LocalDiagnostics
 import com.example.core.common.safeParseMediaUri
 import com.example.core.database.AlbumEntity
@@ -96,9 +100,13 @@ import com.example.ui.feedback.GlassToast
 import com.example.ui.feedback.OperationProgressSheet
 import com.example.ui.theme.FarSpacing
 import com.example.ui.theme.LocalSemanticColors
-import dev.chrisbanes.haze.HazeState
+import com.example.ui.theme.MonoFont
+import com.example.ui.glass.FarGlassState
+import kotlinx.coroutines.launch
 import java.text.DateFormat
+import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -113,6 +121,8 @@ fun MediaDetailsSheetContent(
     onScanOcr: () -> Unit,
     onShareClean: (() -> Unit)? = null,
     onSaveCleanCopy: (() -> Unit)? = null,
+    onExportPdf: (() -> Unit)? = null,
+    onTagClick: ((String) -> Unit)? = null,
 ) {
     val ctx = LocalContext.current
     val semantic = LocalSemanticColors.current
@@ -164,12 +174,16 @@ fun MediaDetailsSheetContent(
                 color = if (exifInfo?.hasGps == true) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        if (!item.isVideo && (onShareClean != null || onSaveCleanCopy != null)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (!item.isVideo && (onShareClean != null || onSaveCleanCopy != null || onExportPdf != null)) {
+            FlowRow(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 onShareClean?.let {
                     OutlinedButton(
                         onClick = it,
-                        modifier = Modifier.weight(1f).defaultMinSize(minHeight = 48.dp).testTag("details_share_clean"),
+                        modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("details_share_clean"),
                     ) {
                         Icon(Icons.Filled.Share, null, Modifier.size(16.dp))
                         Text(" Share clean", maxLines = 1)
@@ -178,10 +192,19 @@ fun MediaDetailsSheetContent(
                 onSaveCleanCopy?.let {
                     OutlinedButton(
                         onClick = it,
-                        modifier = Modifier.weight(1f).defaultMinSize(minHeight = 48.dp).testTag("details_save_clean"),
+                        modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("details_save_clean"),
                     ) {
                         Icon(Icons.Filled.Security, null, Modifier.size(16.dp))
                         Text(" Save clean copy", maxLines = 1)
+                    }
+                }
+                onExportPdf?.let {
+                    OutlinedButton(
+                        onClick = it,
+                        modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("details_export_pdf"),
+                    ) {
+                        Icon(Icons.Filled.PictureAsPdf, null, Modifier.size(16.dp))
+                        Text(" " + stringResource(R.string.viewer_export_pdf), maxLines = 1)
                     }
                 }
             }
@@ -194,9 +217,17 @@ fun MediaDetailsSheetContent(
                 tags.forEach { tag ->
                     InputChip(
                         selected = false,
-                        onClick = { onRemoveTag(tag.id) },
+                        onClick = { onTagClick?.invoke(tag.name) ?: onRemoveTag(tag.id) },
                         label = { Text(tag.name) },
-                        trailingIcon = { Icon(Icons.Filled.Close, "Remove tag", Modifier.size(14.dp)) },
+                        trailingIcon = {
+                            Icon(
+                                Icons.Filled.Close,
+                                "Remove tag",
+                                Modifier
+                                    .size(18.dp)
+                                    .clickable { onRemoveTag(tag.id) },
+                            )
+                        },
                     )
                 }
             }
@@ -468,15 +499,19 @@ fun ExcludedFoldersScreen(
 }
 
 @Composable
-fun FilesTab(glass: HazeState) {
+fun FilesTab(
+    glass: FarGlassState,
+    onOpenMedia: (uri: Uri, name: String, isVideo: Boolean) -> Unit = { _, _, _ -> },
+) {
     val fvm: FilesViewModel = viewModel()
     val ui by fvm.ui.collectAsState()
     val op by fvm.operation.collectAsState()
     val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
     var renaming by remember { mutableStateOf<FileEntry?>(null) }
     var deleting by remember { mutableStateOf<List<FileEntry>?>(null) }
     var zipping by remember { mutableStateOf<List<FileEntry>?>(null) }
-    var props by remember { mutableStateOf<Pair<FileEntry, String>?>(null) }
+    var props by remember { mutableStateOf<FilesEvent.Properties?>(null) }
     var previewing by remember { mutableStateOf<Triple<Uri, String, String>?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { it?.let(fvm::addGrant) }
@@ -486,6 +521,7 @@ fun FilesTab(glass: HazeState) {
             when (e) {
                 FilesEvent.PickFolder -> folderPicker.launch(null)
                 is FilesEvent.PreviewFile -> previewing = Triple(e.uri, e.mime, e.name)
+                is FilesEvent.OpenGalleryMedia -> onOpenMedia(e.uri, e.name, e.isVideo)
                 is FilesEvent.OpenFile -> runCatching {
                     ctx.startActivity(
                         Intent.createChooser(
@@ -511,7 +547,7 @@ fun FilesTab(glass: HazeState) {
                 is FilesEvent.AskDelete -> deleting = e.entries
                 is FilesEvent.AskZip -> zipping = e.entries
                 is FilesEvent.Message -> message = e.text
-                is FilesEvent.Properties -> props = e.entry to e.path
+                is FilesEvent.Properties -> props = e
             }
         }
     }
@@ -559,8 +595,14 @@ fun FilesTab(glass: HazeState) {
     }
 
     zipping?.let { list ->
-        val defaultName = remember(list) {
-            if (list.size == 1) "${list.first().name.substringBeforeLast('.')}.zip" else "Archive.zip"
+        val defaultName = remember(list, ui.crumbs) {
+            if (list.size == 1) {
+                "${list.first().name.substringBeforeLast('.')}.zip"
+            } else {
+                val folder = ui.crumbs.lastOrNull()?.replace(Regex("[^A-Za-z0-9_-]"), "_")?.take(18)?.ifBlank { null } ?: "FarFiles"
+                val stamp = SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(Date())
+                "${folder}_${stamp}.zip"
+            }
         }
         var zipName by remember(list) { mutableStateOf(defaultName) }
         AlertDialog(
@@ -614,7 +656,12 @@ fun FilesTab(glass: HazeState) {
         )
     }
 
-    props?.let { (e, path) ->
+    props?.let { propEvent ->
+        val e = propEvent.entry
+        val path = propEvent.path
+        val fileUri = propEvent.uri
+        var sha256 by remember(propEvent) { mutableStateOf<String?>(null) }
+        var hashing by remember(propEvent) { mutableStateOf(false) }
         AlertDialog(
             onDismissRequest = { props = null },
             title = { Text(e.name) },
@@ -625,6 +672,54 @@ fun FilesTab(glass: HazeState) {
                     e.sizeBytes?.let { Text("Size: ${humanSize(it)}") }
                     e.modifiedLabel?.let { Text("Modified: $it") }
                     Text("Permissions: rename=${e.canRename}, move=${e.canMove}, delete=${e.canDelete}")
+                    if (!e.isDirectory && fileUri != null) {
+                        when {
+                            hashing -> {
+                                LinearProgressIndicator(Modifier.fillMaxWidth())
+                                Text(
+                                    stringResource(R.string.files_computing_sha256),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            sha256 != null -> {
+                                val digest = sha256!!
+                                Text(
+                                    "SHA-256: $digest",
+                                    style = MaterialTheme.typography.labelMedium.copy(fontFamily = MonoFont),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.testTag("files_sha256_value"),
+                                )
+                                TextButton(
+                                    onClick = {
+                                        copyPlainTextToClipboard(ctx, "SHA-256", digest)
+                                        message = ctx.getString(R.string.files_sha256_copied)
+                                    },
+                                    modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("files_copy_sha256"),
+                                ) {
+                                    Icon(Icons.Filled.ContentCopy, null, Modifier.size(16.dp))
+                                    Text(" " + stringResource(R.string.files_copy_sha256))
+                                }
+                            }
+                            else -> {
+                                OutlinedButton(
+                                    onClick = {
+                                        hashing = true
+                                        scope.launch {
+                                            when (val res = fvm.computeSha256(fileUri)) {
+                                                is FarResult.Ok -> sha256 = res.value
+                                                is FarResult.Err -> message = "Couldn't compute checksum (${res.error.code})."
+                                            }
+                                            hashing = false
+                                        }
+                                    },
+                                    modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("files_compute_sha256"),
+                                ) {
+                                    Text(stringResource(R.string.files_compute_sha256))
+                                }
+                            }
+                        }
+                    }
                 }
             },
             confirmButton = {
@@ -665,7 +760,18 @@ fun FilesTab(glass: HazeState) {
                             ) { Text(stringResource(R.string.viewer_open_with)) }
                         },
                     )
-                    FilePreview(uri, mime, Modifier.weight(1f).fillMaxWidth())
+                    FilePreview(
+                        uri = uri,
+                        mime = mime,
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        name = name,
+                        onExtract = if (ui.selectedPlaceId != "starred") {
+                            {
+                                previewing = null
+                                fvm.extractZipByUri(uri, name)
+                            }
+                        } else null,
+                    )
                 }
             }
         }

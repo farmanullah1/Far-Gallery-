@@ -7,6 +7,7 @@ import android.graphics.ImageDecoder
 import android.media.ExifInterface
 import android.net.Uri
 import android.provider.MediaStore
+import androidx.core.content.FileProvider
 import com.example.core.common.FarError
 import com.example.core.common.FarResult
 import com.example.core.common.LocalDiagnostics
@@ -16,7 +17,16 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
 import kotlin.math.max
+
+enum class QuickSharePreset(val maxLongEdge: Int?, val quality: Int, val stripExif: Boolean) {
+    Original(null, 100, false),
+    PrivacyClean(4096, 95, true),
+    Compact1600(1600, 88, true),
+    Messaging1080(1080, 82, true),
+}
 
 enum class ResizePreset(val label: String, val maxLongEdge: Int?, val scalePercent: Int?) {
     Edge2048("2048 px", 2048, null),
@@ -40,6 +50,53 @@ data class BatchOpSummary(
 )
 
 object BatchMediaOps {
+
+    suspend fun prepareShareUris(
+        ctx: Context,
+        uris: List<Uri>,
+        preset: QuickSharePreset,
+    ): List<Uri> = withContext(Dispatchers.IO) {
+        if (preset == QuickSharePreset.Original) return@withContext uris
+        val dir = File(ctx.cacheDir, "stripped_shares").apply {
+            if (exists()) listFiles()?.forEach { it.delete() } else mkdirs()
+        }
+        val authority = "${ctx.packageName}.fileprovider"
+        val resolver = ctx.contentResolver
+        uris.mapIndexed { idx, uri ->
+            val mime = resolver.getType(uri).orEmpty()
+            if (!mime.startsWith("image/")) {
+                uri
+            } else {
+                runCatching {
+                    val maxEdge = preset.maxLongEdge ?: 4096
+                    val src = ImageDecoder.createSource(resolver, uri)
+                    val bmp = ImageDecoder.decodeBitmap(src) { d, info, _ ->
+                        val longEdge = max(info.size.width, info.size.height)
+                        if (longEdge > maxEdge) {
+                            val f = maxEdge.toFloat() / longEdge
+                            d.setTargetSize(
+                                (info.size.width * f).toInt().coerceAtLeast(1),
+                                (info.size.height * f).toInt().coerceAtLeast(1),
+                            )
+                        }
+                        d.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                        d.isMutableRequired = false
+                    }
+                    val outFile = File(dir, "share_${preset.name.lowercase()}_${System.currentTimeMillis()}_$idx.jpg")
+                    try {
+                        FileOutputStream(outFile).use { fos ->
+                            if (!bmp.compress(Bitmap.CompressFormat.JPEG, preset.quality.coerceIn(40, 100), fos)) {
+                                throw java.io.IOException("compress failed")
+                            }
+                        }
+                    } finally {
+                        bmp.recycle()
+                    }
+                    FileProvider.getUriForFile(ctx, authority, outFile)
+                }.getOrElse { uri }
+            }
+        }
+    }
 
     fun buildRenamedName(originalName: String, prefix: String, number: Int, zeroPad: Int = 3): String {
         val cleanPrefix = prefix.trim()

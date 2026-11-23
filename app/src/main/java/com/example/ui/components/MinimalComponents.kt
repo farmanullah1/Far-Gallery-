@@ -50,6 +50,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
+import com.example.ui.glass.FarGlassState
 import com.example.ui.glass.GlassKind
 import com.example.ui.glass.glass
 import com.example.ui.theme.FarMotion
@@ -57,7 +58,6 @@ import com.example.ui.theme.FarSpacing
 import com.example.ui.theme.LocalHapticsEnabled
 import com.example.ui.theme.LocalReducedMotion
 import com.example.ui.theme.LocalSemanticColors
-import dev.chrisbanes.haze.HazeState
 
 /**
  * Standardized minimal header shared across sub-screens and utility flows.
@@ -205,7 +205,7 @@ fun FarFilterPill(
 @Composable
 fun FarFilterDrawer(
     visible: Boolean,
-    glass: HazeState,
+    glass: FarGlassState,
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
@@ -236,7 +236,7 @@ fun FarFilterDrawer(
  */
 @Composable
 fun RecoveryBanner(
-    glass: HazeState,
+    glass: FarGlassState,
     icon: ImageVector,
     title: String,
     body: String,

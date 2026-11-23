@@ -121,6 +121,7 @@ import com.example.ui.feedback.ErrorAction
 import com.example.ui.feedback.ErrorCard
 import com.example.ui.feedback.ErrorInfo
 import com.example.ui.feedback.skeleton
+import com.example.ui.glass.FarGlassState
 import com.example.ui.glass.GlassKind
 import com.example.ui.glass.glass
 import com.example.ui.glass.glassSource
@@ -130,7 +131,6 @@ import com.example.ui.theme.LocalHapticsEnabled
 import com.example.ui.theme.LocalIsDark
 import com.example.ui.theme.LocalReducedMotion
 import com.example.ui.theme.LocalSemanticColors
-import dev.chrisbanes.haze.HazeState
 
 /** ---------- UI models (built from Room + MediaStore, never fabricated) ---------- */
 sealed interface GalleryItem {
@@ -168,7 +168,7 @@ enum class LibraryZoom(val labelRes: Int) {
 @Composable
 fun GalleryScreen(
     items: LazyPagingItems<GalleryItem>,
-    glass: HazeState,
+    glass: FarGlassState,
     zoom: LibraryZoom,
     onZoomChange: (LibraryZoom) -> Unit,
     selection: Set<Long>,
@@ -193,6 +193,7 @@ fun GalleryScreen(
     onPullRefresh: (() -> Unit)? = null,
     onOpenSettings: (() -> Unit)? = null,
     onClearSelection: (() -> Unit)? = null,
+    onToggleGroupSelect: ((Set<Long>) -> Unit)? = null,
     mediaTileModifier: @Composable (GalleryItem.Media) -> Modifier = { Modifier },
     gridState: LazyGridState = rememberLazyGridState(),
 ) {
@@ -320,7 +321,33 @@ fun GalleryScreen(
                         contentType = { index -> items.peek(index)?.let { it::class } },
                     ) { index ->
                         when (val item = items[index]) {
-                            is GalleryItem.Header -> DateHeader(item)
+                            is GalleryItem.Header -> {
+                                val groupIds = remember(items.itemCount, index, item.anchorId) {
+                                    buildSet {
+                                        var i = index + 1
+                                        while (i < items.itemCount) {
+                                            when (val next = items.peek(i)) {
+                                                is GalleryItem.Header -> break
+                                                is GalleryItem.Media -> add(next.id)
+                                                null -> Unit
+                                            }
+                                            i++
+                                        }
+                                    }
+                                }
+                                val allSelected = groupIds.isNotEmpty() && groupIds.all { it in selection }
+                                DateHeader(
+                                    h = item,
+                                    selecting = selecting,
+                                    allSelected = allSelected,
+                                    onToggleGroup = if (onToggleGroupSelect != null && groupIds.isNotEmpty()) {
+                                        {
+                                            if (hapticsOn) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            onToggleGroupSelect(groupIds)
+                                        }
+                                    } else null,
+                                )
+                            }
                             is GalleryItem.Media -> MediaTile(
                                 item = item,
                                 isFavorite = item.isFavorite || item.id in favoriteIds,
@@ -435,7 +462,7 @@ fun GalleryScreen(
 
 @Composable
 private fun LibraryTopBar(
-    glass: HazeState,
+    glass: FarGlassState,
     zoom: LibraryZoom,
     onZoom: (LibraryZoom) -> Unit,
     selectedCount: Int,
@@ -726,7 +753,7 @@ private fun LibraryTopBar(
 private fun TimelineFastScrollbar(
     gridState: LazyGridState,
     items: LazyPagingItems<GalleryItem>,
-    glass: HazeState,
+    glass: FarGlassState,
     topMargin: androidx.compose.ui.unit.Dp,
     bottomMargin: androidx.compose.ui.unit.Dp,
     modifier: Modifier = Modifier,
@@ -835,11 +862,44 @@ private fun TimelineFastScrollbar(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun DateHeader(h: GalleryItem.Header) {
-    Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 6.dp)) {
-        Text(h.title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
-        h.subtitle?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+private fun DateHeader(
+    h: GalleryItem.Header,
+    selecting: Boolean = false,
+    allSelected: Boolean = false,
+    onToggleGroup: (() -> Unit)? = null,
+) {
+    val headerModifier = if (onToggleGroup != null) {
+        Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = { if (selecting) onToggleGroup() },
+                onLongClick = onToggleGroup,
+            )
+    } else {
+        Modifier.fillMaxWidth()
+    }
+    Row(
+        headerModifier.padding(start = 16.dp, end = 12.dp, top = 20.dp, bottom = 6.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(h.title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+            h.subtitle?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        }
+        if (onToggleGroup != null && selecting) {
+            androidx.compose.material3.TextButton(
+                onClick = onToggleGroup,
+                modifier = Modifier.testTag("date_header_select_${h.anchorId}"),
+            ) {
+                Text(
+                    stringResource(if (allSelected) R.string.gallery_deselect_group else R.string.gallery_select_group),
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+        }
     }
 }
 

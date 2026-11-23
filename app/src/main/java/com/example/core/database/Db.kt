@@ -153,6 +153,9 @@ interface TagDao {
     @Query("SELECT mt.mediaId FROM media_tag mt INNER JOIN tag t ON t.id = mt.tagId WHERE LOWER(t.name) LIKE '%' || LOWER(:query) || '%'")
     suspend fun findMediaIdsByTagQuery(query: String): List<Long>
 
+    @Query("SELECT mt.mediaId FROM media_tag mt INNER JOIN tag t ON t.id = mt.tagId WHERE LOWER(t.name) = LOWER(:name)")
+    suspend fun findMediaIdsByExactTag(name: String): List<Long>
+
     @Query("SELECT * FROM tag WHERE LOWER(name) = LOWER(:name) LIMIT 1")
     suspend fun findByName(name: String): TagEntity?
 
@@ -207,6 +210,9 @@ interface HistoryDao {
     @Query("DELETE FROM search_history")
     suspend fun clear()
 
+    @Query("DELETE FROM search_history WHERE query = :query")
+    suspend fun remove(query: String)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun view(r: RecentView)
 
@@ -256,6 +262,18 @@ interface OcrDao {
     suspend fun clearAll()
 }
 
+@Dao
+interface SavedSearchDao {
+    @Query("SELECT * FROM saved_search ORDER BY id DESC")
+    fun all(): Flow<List<SavedSearch>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(search: SavedSearch): Long
+
+    @Query("DELETE FROM saved_search WHERE id = :id")
+    suspend fun delete(id: Long)
+}
+
 @Database(
     entities = [
         AlbumEntity::class,
@@ -285,6 +303,7 @@ abstract class FarDatabase : RoomDatabase() {
     abstract fun operations(): OperationDao
     abstract fun editRecipes(): EditRecipeDao
     abstract fun ocr(): OcrDao
+    abstract fun savedSearches(): SavedSearchDao
 
     companion object {
         @Volatile

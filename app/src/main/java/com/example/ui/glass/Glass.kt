@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -15,25 +16,24 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.dp
 import com.example.ui.theme.LocalGlass
 import com.example.ui.theme.LocalReduceTransparency
-import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.HazeTint
-import dev.chrisbanes.haze.hazeEffect
-import dev.chrisbanes.haze.hazeSource
 
 /**
- * Glass = backdrop blur (Haze, RenderEffect on API 31+) + translucent tint + hairline border.
- * API 30 / reduce-transparency / low-power => opaque tint fallback with identical layout.
+ * Minimal frosted translucent glass backed by pure Compose gradients, specular hairline borders,
+ * and surface fallback when reduce-transparency is enabled.
  */
 enum class GlassKind { Bar, Chip, Sheet, Overlay }
 
-@Composable
-fun rememberGlass(): HazeState = remember { HazeState() }
+@Immutable
+object FarGlassState
 
-fun Modifier.glassSource(state: HazeState): Modifier = this.hazeSource(state)
+@Composable
+fun rememberGlass(): FarGlassState = remember { FarGlassState }
+
+fun Modifier.glassSource(state: FarGlassState): Modifier = this
 
 @Composable
 fun Modifier.glass(
-    state: HazeState,
+    state: FarGlassState,
     shape: Shape,
     kind: GlassKind = GlassKind.Bar,
     forceFallback: Boolean = false,
@@ -43,7 +43,7 @@ fun Modifier.glass(
     val reduce = LocalReduceTransparency.current || forceFallback
     val border = Brush.verticalGradient(listOf(g.borderTop, g.borderBottom))
     val base = if (elevated) {
-        this.shadow(12.dp, shape, ambientColor = Color.Black.copy(0.12f), spotColor = Color.Black.copy(0.12f))
+        this.shadow(10.dp, shape, ambientColor = Color.Black.copy(0.12f), spotColor = Color.Black.copy(0.12f))
     } else {
         this
     }
@@ -54,29 +54,26 @@ fun Modifier.glass(
             .border(0.75.dp, border, shape)
     }
 
-    val radius = when (kind) {
-        GlassKind.Bar -> g.blur
-        GlassKind.Chip -> g.blur * 0.7f
-        GlassKind.Sheet -> g.blur * 1.4f
-        GlassKind.Overlay -> g.blur * 1.8f
+    val surfaceBrush = when (kind) {
+        GlassKind.Sheet, GlassKind.Overlay -> Brush.verticalGradient(
+            listOf(g.tintStrong.copy(alpha = 0.96f), g.fallback.copy(alpha = 0.92f))
+        )
+        GlassKind.Chip -> Brush.verticalGradient(
+            listOf(g.tintStrong.copy(alpha = 0.90f), g.tint.copy(alpha = 0.86f))
+        )
+        GlassKind.Bar -> Brush.verticalGradient(
+            listOf(g.tintStrong.copy(alpha = 0.93f), g.tint.copy(alpha = 0.88f))
+        )
     }
-    val tint = when (kind) {
-        GlassKind.Sheet, GlassKind.Overlay -> g.tintStrong
-        else -> g.tint
-    }
+
     return base.clip(shape)
-        .hazeEffect(state) {
-            blurRadius = radius
-            tints = listOf(HazeTint(tint))
-            noiseFactor = 0.02f
-            fallbackTint = HazeTint(g.fallback.copy(alpha = 0.94f))
-        }
+        .background(surfaceBrush)
         .border(0.75.dp, border, shape)
 }
 
 @Composable
 fun GlassSurface(
-    state: HazeState,
+    state: FarGlassState,
     shape: Shape,
     modifier: Modifier = Modifier,
     kind: GlassKind = GlassKind.Bar,

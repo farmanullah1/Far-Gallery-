@@ -59,6 +59,7 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.example.R
+import com.example.ui.glass.FarGlassState
 import com.example.ui.glass.GlassKind
 import com.example.ui.glass.glass
 import com.example.ui.theme.FarMotion
@@ -66,7 +67,6 @@ import com.example.ui.theme.LocalHapticsEnabled
 import com.example.ui.theme.LocalIsDark
 import com.example.ui.theme.LocalReducedMotion
 import com.example.ui.theme.LocalSemanticColors
-import dev.chrisbanes.haze.HazeState
 
 enum class FarTab(
     val labelRes: Int,
@@ -83,7 +83,7 @@ enum class FarTab(
 /** Floating glass tab pill + detached circular camera button. Slides away when [visible] = false. */
 @Composable
 fun GlassBottomBar(
-    glass: HazeState,
+    glass: FarGlassState,
     selected: FarTab,
     onSelect: (FarTab) -> Unit,
     onCamera: () -> Unit,
@@ -114,7 +114,7 @@ fun GlassBottomBar(
 /** Tablet / foldable navigation rail with detached camera action button. */
 @Composable
 fun GlassNavRail(
-    glass: HazeState,
+    glass: FarGlassState,
     selected: FarTab,
     onSelect: (FarTab) -> Unit,
     onCamera: () -> Unit,
@@ -188,7 +188,7 @@ fun GlassNavRail(
 }
 
 @Composable
-private fun TabPill(glass: HazeState, selected: FarTab, onSelect: (FarTab) -> Unit, modifier: Modifier) {
+private fun TabPill(glass: FarGlassState, selected: FarTab, onSelect: (FarTab) -> Unit, modifier: Modifier) {
     val reduced = LocalReducedMotion.current
     val haptic = LocalHapticFeedback.current
     val hapticsOn = LocalHapticsEnabled.current
@@ -254,7 +254,7 @@ private fun TabPill(glass: HazeState, selected: FarTab, onSelect: (FarTab) -> Un
 }
 
 @Composable
-private fun CameraButton(glass: HazeState, onClick: () -> Unit) {
+private fun CameraButton(glass: FarGlassState, onClick: () -> Unit) {
     val haptic = LocalHapticFeedback.current
     val hapticsOn = LocalHapticsEnabled.current
     val semantic = LocalSemanticColors.current

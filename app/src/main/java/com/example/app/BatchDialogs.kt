@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -15,9 +17,13 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -41,6 +47,7 @@ import com.example.R
 import com.example.core.media.BatchMediaOps
 import com.example.core.media.BatchResizeConfig
 import com.example.core.media.MediaRow
+import com.example.core.media.QuickSharePreset
 import com.example.core.media.ResizePreset
 import com.example.ui.components.FarFilterPill
 
@@ -214,6 +221,77 @@ fun CompareSecondPickerDialog(
                 onClick = onDismiss,
                 modifier = Modifier.defaultMinSize(minHeight = 48.dp),
             ) { Text(stringResource(R.string.action_cancel)) }
+        },
+    )
+}
+
+@Composable
+fun QuickSharePresetDialog(
+    count: Int,
+    defaultPreset: QuickSharePreset,
+    onPickPreset: (QuickSharePreset) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var selected by remember(defaultPreset) { mutableStateOf(defaultPreset) }
+    val options = listOf(
+        Triple(QuickSharePreset.Original, R.string.share_preset_original, R.string.share_preset_original_sub),
+        Triple(QuickSharePreset.PrivacyClean, R.string.share_preset_clean, R.string.share_preset_clean_sub),
+        Triple(QuickSharePreset.Compact1600, R.string.share_preset_compact, R.string.share_preset_compact_sub),
+        Triple(QuickSharePreset.Messaging1080, R.string.share_preset_messaging, R.string.share_preset_messaging_sub),
+    )
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("${stringResource(R.string.share_presets_title)} ($count)") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                options.forEach { (preset, titleRes, subRes) ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .defaultMinSize(minHeight = 52.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { selected = preset }
+                            .padding(horizontal = 6.dp, vertical = 6.dp)
+                            .testTag("share_preset_${preset.name.lowercase()}"),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        RadioButton(selected = selected == preset, onClick = null)
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                stringResource(titleRes),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            Text(
+                                stringResource(subRes),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (selected == preset) {
+                            Icon(Icons.Filled.Check, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onPickPreset(selected) },
+                modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("share_preset_confirm"),
+            ) {
+                Text(stringResource(R.string.action_share))
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+            ) {
+                Text(stringResource(R.string.action_cancel))
+            }
         },
     )
 }

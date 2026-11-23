@@ -85,6 +85,14 @@ enum class AppLanguage(val tag: String, val labelRes: Int) {
     Urdu("ur", R.string.language_ur),
 }
 
+@androidx.compose.runtime.Immutable
+data class PinnedFolderShortcut(
+    val id: String,
+    val treeUri: String,
+    val docId: String,
+    val label: String,
+)
+
 data class FarSettings(
     val theme: ThemeMode = ThemeMode.System,
     val accentIndex: Int = 0,
@@ -104,6 +112,7 @@ data class FarSettings(
     val memoriesEnabled: Boolean = true,
     val languageTag: String = "",
     val albumSort: AlbumSort = AlbumSort.Pinned,
+    val pinnedFolders: List<PinnedFolderShortcut> = emptyList(),
 )
 
 class SettingsStore(private val ctx: Context) {
@@ -126,6 +135,7 @@ class SettingsStore(private val ctx: Context) {
         val mem = booleanPreferencesKey("mem")
         val lang = stringPreferencesKey("lang")
         val albumSort = stringPreferencesKey("albumSort")
+        val pinnedFolders = stringPreferencesKey("pinnedFolders")
     }
 
     val flow: Flow<FarSettings> = ctx.store.data
@@ -157,6 +167,7 @@ class SettingsStore(private val ctx: Context) {
                 p[K.mem] = s.memoriesEnabled
                 p[K.lang] = s.languageTag
                 p[K.albumSort] = s.albumSort.name
+                p[K.pinnedFolders] = encodePinned(s.pinnedFolders)
             }
         }.onFailure { err ->
             LocalDiagnostics.recordEvent(ctx, "FG-PREFS", "settings_save", err.javaClass.simpleName)
@@ -182,7 +193,42 @@ class SettingsStore(private val ctx: Context) {
         memoriesEnabled = p[K.mem] ?: true,
         languageTag = p[K.lang] ?: "",
         albumSort = p[K.albumSort]?.let { runCatching { AlbumSort.valueOf(it) }.getOrNull() } ?: AlbumSort.Pinned,
+        pinnedFolders = decodePinned(p[K.pinnedFolders]),
     )
+
+    private fun encodePinned(list: List<PinnedFolderShortcut>): String {
+        val arr = org.json.JSONArray()
+        list.forEach { item ->
+            arr.put(
+                org.json.JSONObject().apply {
+                    put("id", item.id)
+                    put("tree", item.treeUri)
+                    put("doc", item.docId)
+                    put("label", item.label)
+                }
+            )
+        }
+        return arr.toString()
+    }
+
+    private fun decodePinned(raw: String?): List<PinnedFolderShortcut> {
+        if (raw.isNullOrBlank()) return emptyList()
+        return runCatching {
+            val arr = org.json.JSONArray(raw)
+            buildList {
+                for (i in 0 until arr.length()) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    val id = o.optString("id")
+                    val tree = o.optString("tree")
+                    val doc = o.optString("doc")
+                    val label = o.optString("label")
+                    if (id.isNotBlank() && tree.isNotBlank() && doc.isNotBlank() && label.isNotBlank()) {
+                        add(PinnedFolderShortcut(id, tree, doc, label))
+                    }
+                }
+            }
+        }.getOrDefault(emptyList())
+    }
 }
 
 @Composable

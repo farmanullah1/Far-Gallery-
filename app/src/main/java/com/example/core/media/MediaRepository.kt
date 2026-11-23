@@ -30,6 +30,8 @@ import com.example.core.database.ExcludedFolder
 import com.example.core.database.FarDatabase
 import com.example.core.database.FavoriteEntity
 import com.example.core.database.MediaTagRef
+import com.example.core.database.RecentView
+import com.example.core.database.SavedSearch
 import com.example.core.database.SearchHistory
 import com.example.core.database.TagEntity
 import com.example.feature.gallery.GalleryItem
@@ -124,8 +126,10 @@ class MediaRepository(private val resolver: ContentResolver) {
                 }
                 val out = r.insert(collection, values) ?: throw java.io.IOException("insert failed")
                 try {
-                    r.openInputStream(sourceUri)!!.use { input ->
-                        r.openOutputStream(out)!!.use { output -> input.copyTo(output) }
+                    val input = r.openInputStream(sourceUri) ?: throw java.io.IOException("openInputStream returned null")
+                    input.use { src ->
+                        val output = r.openOutputStream(out) ?: throw java.io.IOException("openOutputStream returned null")
+                        output.use { dst -> src.copyTo(dst) }
                     }
                     r.update(out, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
                 } catch (e: Exception) {
@@ -190,7 +194,10 @@ internal fun queryMediaStore(
     }
     filter.onlyIds?.let { ids ->
         if (ids.isEmpty()) return emptyList()
-        sel.append(" AND ${MediaStore.MediaColumns._ID} IN (${ids.joinToString(",")})")
+        val idClauses = ids.chunked(400).joinToString(" OR ") { chunk ->
+            "${MediaStore.MediaColumns._ID} IN (${chunk.joinToString(",")})"
+        }
+        sel.append(" AND ($idClauses)")
     }
 
     val sortCols = when (sort) {
@@ -272,17 +279,24 @@ private class MediaPagingSource(
     private val desc: Boolean,
 ) : PagingSource<Int, MediaRow>() {
 
+    private val seenIds = java.util.Collections.synchronizedSet(HashSet<Long>())
+
     override fun getRefreshKey(state: PagingState<Int, MediaRow>): Int? = null
 
     override suspend fun load(params: LoadParams<Int>): LoadResult<Int, MediaRow> = withContext(Dispatchers.IO) {
         val offset = params.key ?: 0
+        if (offset == 0) seenIds.clear()
         val limit = params.loadSize
         when (val r = farCatching { queryMediaStore(resolver, base, filter, sort, desc, offset, limit) }) {
-            is FarResult.Ok -> LoadResult.Page(
-                data = r.value,
-                prevKey = if (offset == 0) null else (offset - limit).coerceAtLeast(0),
-                nextKey = if (r.value.size < limit) null else offset + r.value.size,
-            )
+            is FarResult.Ok -> {
+                val raw = r.value
+                val unique = raw.filter { seenIds.add(it.id) }
+                LoadResult.Page(
+                    data = unique,
+                    prevKey = if (offset == 0) null else (offset - limit).coerceAtLeast(0),
+                    nextKey = if (raw.size < limit) null else offset + raw.size,
+                )
+            }
             is FarResult.Err -> LoadResult.Error(MediaQueryException(r.error))
         }
     }
@@ -326,6 +340,15 @@ class GalleryViewModel(
     val ocrCount: StateFlow<Int> = db.ocr().indexedCount()
         .catch { emit(0) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+    val allTags: StateFlow<List<TagEntity>> = db.tags().allTags()
+        .catch { emit(emptyList()) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val savedSearches: StateFlow<List<SavedSearch>> = db.savedSearches().all()
+        .catch { emit(emptyList()) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val recentViewIds: StateFlow<List<Long>> = db.history().recentViews()
+        .catch { emit(emptyList()) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val libraryRows: StateFlow<List<MediaRow>> =
         combine(excludedFolders, refreshNonce) { ex, _ -> ex }
@@ -418,6 +441,7 @@ class GalleryViewModel(
     }
 
     fun clearSearchHistory() = viewModelScope.launch { db.history().clear() }
+    fun removeSearchHistory(q: String) = viewModelScope.launch { db.history().remove(q) }
 
     fun addTag(mediaId: Long, rawName: String) = viewModelScope.launch {
         val clean = rawName.trim()
@@ -431,6 +455,22 @@ class GalleryViewModel(
 
     fun removeTag(mediaId: Long, tagId: Long) = viewModelScope.launch {
         db.tags().detach(mediaId, tagId)
+    }
+
+    suspend fun findMediaIdsForTag(tagName: String): Set<Long> =
+        db.tags().findMediaIdsByExactTag(tagName).toSet()
+
+    fun recordRecentView(mediaId: Long) = viewModelScope.launch {
+        if (mediaId > 0L) db.history().view(RecentView(mediaId, System.currentTimeMillis()))
+    }
+
+    fun saveSearch(name: String, queryJson: String) = viewModelScope.launch {
+        val clean = name.trim()
+        if (clean.isNotEmpty()) db.savedSearches().upsert(SavedSearch(name = clean, queryJson = queryJson))
+    }
+
+    fun deleteSavedSearch(id: Long) = viewModelScope.launch {
+        db.savedSearches().delete(id)
     }
 
     companion object {

@@ -14,9 +14,11 @@ import android.net.Uri
 import android.os.Environment
 import android.provider.MediaStore
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.MeteringPoint
 import androidx.camera.video.MediaStoreOutputOptions
 import androidx.camera.video.Quality
 import androidx.camera.video.QualitySelector
@@ -26,18 +28,30 @@ import androidx.camera.view.CameraController
 import androidx.camera.view.LifecycleCameraController
 import androidx.camera.view.video.AudioConfig
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -59,6 +73,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.coroutines.resume
+import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.roundToInt
@@ -97,7 +112,7 @@ class FarCameraManager(private val context: Context) {
             maxZoom = max,
             hasFlash = info.hasFlashUnit(),
             exposureRange = (range.lower * step)..(range.upper * step),
-            modes = listOf(CameraMode.Video, CameraMode.Photo, CameraMode.Square),
+            modes = listOf(CameraMode.Video, CameraMode.Photo, CameraMode.Square, CameraMode.Scan),
             hasFrontCamera = pm.hasSystemFeature(PackageManager.FEATURE_CAMERA_FRONT),
         )
     }.getOrNull()
@@ -127,6 +142,16 @@ class FarCameraManager(private val context: Context) {
         controller.cameraControl?.setExposureCompensationIndex((ev / step).roundToInt())
     }
 
+    fun focusAt(point: MeteringPoint, lockAeAf: Boolean) {
+        val builder = FocusMeteringAction.Builder(point)
+        if (lockAeAf) builder.disableAutoCancel()
+        controller.cameraControl?.startFocusAndMetering(builder.build())
+    }
+
+    fun clearFocusLock() {
+        controller.cameraControl?.cancelFocusAndMetering()
+    }
+
     fun flip() {
         controller.cameraSelector = if (controller.cameraSelector == CameraSelector.DEFAULT_BACK_CAMERA) {
             CameraSelector.DEFAULT_FRONT_CAMERA
@@ -135,9 +160,9 @@ class FarCameraManager(private val context: Context) {
         }
     }
 
-    fun takePhoto(onDone: (Result<Uri>) -> Unit) {
+    fun takePhoto(prefix: String = "IMG_", onDone: (Result<Uri>) -> Unit) {
         val values = ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, "IMG_" + stamp())
+            put(MediaStore.Images.Media.DISPLAY_NAME, prefix + stamp())
             put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
             put(MediaStore.Images.Media.RELATIVE_PATH, "DCIM/Camera")
         }
@@ -159,7 +184,8 @@ class FarCameraManager(private val context: Context) {
         }.onFailure { onDone(Result.failure(it)) }
     }
 
-    suspend fun takePhotoAwait(): Result<Uri> = suspendCancellableCoroutine { c -> takePhoto { c.resume(it) } }
+    suspend fun takePhotoAwait(prefix: String = "IMG_"): Result<Uri> =
+        suspendCancellableCoroutine { c -> takePhoto(prefix) { c.resume(it) } }
 
     @SuppressLint("MissingPermission")
     fun startRecording(maxBytes: Long?, maxSeconds: Int?, onEvent: (VideoRecordEvent) -> Unit): Result<Unit> = runCatching {
@@ -174,13 +200,17 @@ class FarCameraManager(private val context: Context) {
         maxSeconds?.let { b.setDurationLimitMillis(it * 1000L) }
         val audio = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         recording = controller.startRecording(b.build(), AudioConfig.create(audio), mainExecutor) { e ->
-            if (e is VideoRecordEvent.Finalize) recording = null
+            if (e is VideoRecordEvent.Finalize) {
+                recording = null
+                controller.enableTorch(false)
+            }
             onEvent(e)
         }
     }
 
     fun stopRecording() {
         runCatching { recording?.stop() }
+        controller.enableTorch(false)
     }
 
     @androidx.annotation.OptIn(androidx.camera.core.ExperimentalGetImage::class)
@@ -205,7 +235,7 @@ class FarCameraManager(private val context: Context) {
         setMode(mode)
     }
 
-    private fun stamp() = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+    private fun stamp() = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
 }
 
 fun captureErrorInfo(e: Throwable, retry: () -> Unit): ErrorInfo = when ((e as? ImageCaptureException)?.imageCaptureError) {
@@ -240,6 +270,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     val caps: StateFlow<CameraCapabilities?> = _caps.asStateFlow()
     private var timerJob: Job? = null
     private var recJob: Job? = null
+    private var burstJob: Job? = null
     var captureRequest: IncomingRoute.Capture? = null
     var onCaptured: ((Uri) -> Unit)? = null
 
@@ -273,10 +304,36 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         initCamera()
     }
 
-    fun permission(granted: Boolean) = _state.update { it.copy(permissionGranted = granted) }
+    fun permission(granted: Boolean) {
+        _state.update { it.copy(permissionGranted = granted) }
+        if (granted && _caps.value == null) {
+            initCamera()
+        }
+    }
+
     fun micPermission(granted: Boolean) = _state.update { it.copy(micPermissionGranted = granted) }
     fun setGridInitial(on: Boolean) = _state.update { it.copy(gridOn = on) }
     fun toggleGrid() = _state.update { it.copy(gridOn = !it.gridOn) }
+    fun toggleLevel() = _state.update { it.copy(levelEnabled = !it.levelEnabled) }
+    fun toggleBurst() = _state.update { it.copy(burstMode = !it.burstMode) }
+
+    fun setFocusLock(point: MeteringPoint?, lock: Boolean) {
+        if (lock && point != null) {
+            runCatching { manager.focusAt(point, lockAeAf = true) }
+            _state.update { it.copy(aeAfLocked = true) }
+        } else if (point != null) {
+            runCatching { manager.focusAt(point, lockAeAf = false) }
+            _state.update { it.copy(aeAfLocked = false) }
+        } else {
+            runCatching { manager.clearFocusLock() }
+            _state.update { it.copy(aeAfLocked = false) }
+        }
+    }
+
+    fun clearFocusLock() {
+        runCatching { manager.clearFocusLock() }
+        _state.update { it.copy(aeAfLocked = false) }
+    }
 
     fun toggleQr() {
         val next = !_state.value.qrEnabled
@@ -309,7 +366,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     fun dismissQr() = _state.update { it.copy(qrResult = null) }
 
     fun setMode(m: CameraMode) {
-        if (_state.value.recording) return
+        if (_state.value.recording || _state.value.burstCount != null) return
         runCatching { manager.setMode(m) }
             .onFailure {
                 LocalDiagnostics.recordEvent(getApplication(), "FG-CAM-MODE", "camera_mode", it.javaClass.simpleName)
@@ -326,7 +383,13 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 return
             }
-        _state.update { it.copy(mode = m, qrEnabled = false) }
+        _state.update {
+            it.copy(
+                mode = m,
+                qrEnabled = false,
+                burstMode = if (m == CameraMode.Photo || m == CameraMode.Square) it.burstMode else false,
+            )
+        }
     }
 
     fun setZoom(z: Float) {
@@ -350,7 +413,9 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
 
     fun flip() {
         runCatching { manager.flip() }
+        _state.update { it.copy(aeAfLocked = false) }
     }
+
     fun dismissError() = _state.update { it.copy(error = null) }
 
     fun shutter() {
@@ -360,9 +425,51 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
             else -> if (s.countdown != null) {
                 timerJob?.cancel()
                 _state.update { it.copy(countdown = null) }
+            } else if (s.burstCount != null) {
+                burstJob?.cancel()
+                _state.update { it.copy(burstCount = null) }
+            } else if (s.burstMode && (s.mode == CameraMode.Photo || s.mode == CameraMode.Square)) {
+                burstJob = viewModelScope.launch { captureBurst() }
             } else {
                 timerJob = viewModelScope.launch { countdownThenShoot(s.timerSeconds) }
             }
+        }
+    }
+
+    private suspend fun captureBurst(maxShots: Int = 8) {
+        if (lowStorage()) {
+            _state.update {
+                it.copy(
+                    error = ErrorInfo(
+                        "Not enough space",
+                        "Free up storage to keep shooting.",
+                        true,
+                        "FG-SPC",
+                        listOf(ErrorAction("OK", true) { dismissError() }),
+                    )
+                )
+            }
+            return
+        }
+        try {
+            for (shot in 1..maxShots) {
+                if (lowStorage()) break
+                _state.update { it.copy(burstCount = shot) }
+                val res = manager.takePhotoAwait(prefix = "BURST_")
+                res.onSuccess { uri ->
+                    _state.update { it.copy(lastCaptureUri = uri.toString(), lastCaptureWasScan = false) }
+                    onCaptured?.invoke(uri)
+                }.onFailure { e ->
+                    LocalDiagnostics.recordEvent(getApplication(), "FG-CAM-BURST", "camera_burst", e.javaClass.simpleName)
+                    if (shot == 1) {
+                        _state.update { it.copy(error = captureErrorInfo(e) { dismissError() }) }
+                    }
+                    return
+                }
+                delay(180)
+            }
+        } finally {
+            _state.update { it.copy(burstCount = null) }
         }
     }
 
@@ -386,9 +493,10 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
             }
             return
         }
-        manager.takePhotoAwait().fold(
+        val isScan = _state.value.mode == CameraMode.Scan
+        manager.takePhotoAwait(prefix = if (isScan) "SCAN_" else "IMG_").fold(
             onSuccess = { uri ->
-                _state.update { it.copy(lastCaptureUri = uri.toString()) }
+                _state.update { it.copy(lastCaptureUri = uri.toString(), lastCaptureWasScan = isScan) }
                 onCaptured?.invoke(uri)
             },
             onFailure = { e ->
@@ -418,6 +526,9 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
             when (e) {
                 is VideoRecordEvent.Start -> {
                     _state.update { it.copy(recording = true, recordingSeconds = 0) }
+                    if (_state.value.flash == FlashMode.On) {
+                        runCatching { manager.controller.enableTorch(true) }
+                    }
                     recJob = viewModelScope.launch {
                         while (true) {
                             delay(1000)
@@ -446,7 +557,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                         }
                     } else {
                         val uri = e.outputResults.outputUri
-                        _state.update { it.copy(lastCaptureUri = uri.toString()) }
+                        _state.update { it.copy(lastCaptureUri = uri.toString(), lastCaptureWasScan = false) }
                         onCaptured?.invoke(uri)
                     }
                 }
@@ -472,6 +583,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     private fun stopVideo() = manager.stopRecording()
 
     fun onAppStopped() {
+        burstJob?.cancel()
         if (_state.value.recording) stopVideo()
     }
 
@@ -491,30 +603,87 @@ fun GridOverlay(modifier: Modifier = Modifier, divisions: Int = 3) {
 }
 
 @Composable
+fun ScanFrameOverlay(modifier: Modifier = Modifier) {
+    Canvas(modifier.fillMaxSize()) {
+        val marginX = size.width * 0.1f
+        val marginY = size.height * 0.12f
+        val left = marginX
+        val right = size.width - marginX
+        val top = marginY
+        val bottom = size.height - marginY
+        val arm = 26.dp.toPx()
+        val stroke = 3.dp.toPx()
+        val color = Color(0xFFFFD60A)
+        // Top-left
+        drawLine(color, Offset(left, top), Offset(left + arm, top), stroke)
+        drawLine(color, Offset(left, top), Offset(left, top + arm), stroke)
+        // Top-right
+        drawLine(color, Offset(right - arm, top), Offset(right, top), stroke)
+        drawLine(color, Offset(right, top), Offset(right, top + arm), stroke)
+        // Bottom-left
+        drawLine(color, Offset(left, bottom), Offset(left + arm, bottom), stroke)
+        drawLine(color, Offset(left, bottom - arm), Offset(left, bottom), stroke)
+        // Bottom-right
+        drawLine(color, Offset(right - arm, bottom), Offset(right, bottom), stroke)
+        drawLine(color, Offset(right, bottom - arm), Offset(right, bottom), stroke)
+    }
+}
+
+@Composable
 fun LevelIndicator(modifier: Modifier = Modifier) {
     val ctx = LocalContext.current
+    val haptic = LocalHapticFeedback.current
     var roll by remember { mutableFloatStateOf(0f) }
+    var wasLevel by remember { mutableStateOf(false) }
     DisposableEffect(Unit) {
-        val sm = ctx.getSystemService(Context.SENSOR_SERVICE) as SensorManager
-        val sensor = sm.getDefaultSensor(Sensor.TYPE_GRAVITY)
+        val sm = ctx.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+        val sensor = sm?.getDefaultSensor(Sensor.TYPE_GRAVITY)
         val l = object : SensorEventListener {
             override fun onSensorChanged(e: SensorEvent) {
-                roll = Math.toDegrees(atan2(e.values[0].toDouble(), e.values[1].toDouble())).toFloat()
+                val raw = Math.toDegrees(atan2(e.values[0].toDouble(), e.values[1].toDouble())).toFloat()
+                // Smooth jitter while keeping rapid response
+                roll = roll * 0.72f + raw * 0.28f
             }
 
             override fun onAccuracyChanged(s: Sensor?, a: Int) = Unit
         }
-        if (sensor != null) sm.registerListener(l, sensor, SensorManager.SENSOR_DELAY_UI)
-        onDispose { sm.unregisterListener(l) }
+        if (sm != null && sensor != null) sm.registerListener(l, sensor, SensorManager.SENSOR_DELAY_UI)
+        onDispose { sm?.unregisterListener(l) }
     }
-    val level = kotlin.math.abs(roll) < 1f || kotlin.math.abs(kotlin.math.abs(roll) - 180f) < 1f
-    Canvas(modifier.fillMaxSize()) {
-        val c = center
-        val half = 28.dp.toPx()
-        val col = if (level) Color(0xFFFFD60A) else Color.White.copy(0.7f)
-        val a = Math.toRadians(roll.toDouble())
-        val dx = (cos(a) * half).toFloat()
-        val dy = (sin(a) * half).toFloat()
-        drawLine(col, Offset(c.x - dx, c.y + dy), Offset(c.x + dx, c.y - dy), 2.dp.toPx())
+    val level = abs(roll) < 1.2f || abs(abs(roll) - 180f) < 1.2f
+    LaunchedEffect(level) {
+        if (level && !wasLevel) {
+            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        }
+        wasLevel = level
+    }
+    Box(modifier.fillMaxSize()) {
+        Canvas(Modifier.fillMaxSize()) {
+            val c = center
+            val half = 40.dp.toPx()
+            val gap = 10.dp.toPx()
+            val col = if (level) Color(0xFFFFD60A) else Color.White.copy(0.78f)
+            // Fixed horizontal reference ticks
+            drawLine(Color.White.copy(0.45f), Offset(c.x - half - 14.dp.toPx(), c.y), Offset(c.x - half - 4.dp.toPx(), c.y), 1.5.dp.toPx())
+            drawLine(Color.White.copy(0.45f), Offset(c.x + half + 4.dp.toPx(), c.y), Offset(c.x + half + 14.dp.toPx(), c.y), 1.5.dp.toPx())
+            val a = Math.toRadians(roll.toDouble())
+            val dx = (cos(a) * half).toFloat()
+            val dy = (sin(a) * half).toFloat()
+            val gdx = (cos(a) * gap).toFloat()
+            val gdy = (sin(a) * gap).toFloat()
+            drawLine(col, Offset(c.x - dx, c.y + dy), Offset(c.x - gdx, c.y + gdy), 2.5.dp.toPx())
+            drawLine(col, Offset(c.x + gdx, c.y - gdy), Offset(c.x + dx, c.y - dy), 2.5.dp.toPx())
+        }
+        val normalizedDeg = ((roll.roundToInt() + 180) % 180).let { if (it > 90) it - 180 else it }
+        Text(
+            text = "${normalizedDeg}°",
+            color = if (level) Color(0xFFFFD60A) else Color.White.copy(alpha = 0.85f),
+            fontSize = 11.sp,
+            modifier = Modifier
+                .align(Alignment.Center)
+                .offset(y = 26.dp)
+                .background(Color.Black.copy(alpha = 0.48f), RoundedCornerShape(8.dp))
+                .padding(horizontal = 6.dp, vertical = 2.dp),
+        )
     }
 }

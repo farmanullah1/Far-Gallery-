@@ -10,7 +10,12 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.MediaStore
 import androidx.annotation.OptIn
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,6 +27,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -40,6 +47,7 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -47,6 +55,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -55,8 +64,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
@@ -68,32 +80,36 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
+import androidx.media3.common.audio.SonicAudioProcessor
+import androidx.media3.effect.SpeedChangeEffect
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
+import androidx.media3.transformer.Effects
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.Transformer
 import androidx.media3.ui.PlayerView
-import androidx.compose.ui.res.stringResource
 import com.example.R
 import com.example.core.common.FarError
 import com.example.core.common.FarResult
 import com.example.core.common.LocalDiagnostics
 import com.example.core.common.farCatching
+import com.example.ui.components.FarFilterPill
 import com.example.ui.feedback.ErrorAction
 import com.example.ui.feedback.ErrorCard
 import com.example.ui.feedback.ErrorInfo
 import com.example.ui.glass.GlassKind
 import com.example.ui.glass.glass
 import com.example.ui.theme.FarSpacing
-import dev.chrisbanes.haze.HazeState
+import com.example.ui.glass.FarGlassState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.coroutines.resume
+import kotlin.math.abs
 
 private val speeds = listOf(0.5f, 1f, 1.5f, 2f)
 
@@ -102,7 +118,7 @@ private val speeds = listOf(0.5f, 1f, 1.5f, 2f)
 @Composable
 fun VideoPlayer(
     uri: String,
-    glass: HazeState,
+    glass: FarGlassState,
     resumeMs: Long?,
     onPosition: (Long) -> Unit,
     onFrameGrab: (Long) -> Unit,
@@ -117,6 +133,15 @@ fun VideoPlayer(
     var dur by remember { mutableLongStateOf(0L) }
     var speedIdx by remember { mutableIntStateOf(1) }
     var attempt by remember(uri) { mutableIntStateOf(0) }
+    var seekFlashLabel by remember { mutableStateOf<String?>(null) }
+    var seekFlashSeq by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(seekFlashSeq) {
+        if (seekFlashLabel != null) {
+            delay(750)
+            seekFlashLabel = null
+        }
+    }
 
     val player = remember(uri, attempt) {
         runCatching {
@@ -202,10 +227,43 @@ fun VideoPlayer(
                 Modifier.align(Alignment.Center),
             )
         } else {
-            AndroidView(
-                factory = { PlayerView(it).apply { this.player = player; useController = false } },
-                modifier = Modifier.fillMaxSize(),
-            )
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .pointerInput(player, dur) {
+                        detectTapGestures(
+                            onDoubleTap = { offset ->
+                                val deltaMs = if (offset.x < size.width / 2f) -10_000L else 10_000L
+                                val maxDur = dur.takeIf { it > 0L } ?: Long.MAX_VALUE
+                                val target = (player.currentPosition + deltaMs).coerceIn(0L, maxDur)
+                                runCatching { player.seekTo(target) }
+                                seekFlashLabel = if (deltaMs < 0L) "-10s" else "+10s"
+                                seekFlashSeq++
+                            },
+                        )
+                    }
+            ) {
+                AndroidView(
+                    factory = { PlayerView(it).apply { this.player = player; useController = false } },
+                    modifier = Modifier.fillMaxSize(),
+                )
+                AnimatedVisibility(
+                    visible = seekFlashLabel != null,
+                    enter = fadeIn(),
+                    exit = fadeOut(),
+                    modifier = Modifier.align(Alignment.Center),
+                ) {
+                    Text(
+                        text = seekFlashLabel.orEmpty(),
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .background(Color.Black.copy(alpha = 0.68f), RoundedCornerShape(20.dp))
+                            .padding(horizontal = 18.dp, vertical = 10.dp),
+                    )
+                }
+            }
             Column(
                 Modifier
                     .align(Alignment.BottomCenter)
@@ -234,7 +292,7 @@ fun VideoPlayer(
                             onClick = { runCatching { player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L)) } },
                             modifier = Modifier.size(48.dp),
                         ) {
-                            Icon(Icons.Filled.Replay10, "Back 10s", tint = Color.White)
+                            Icon(Icons.Filled.Replay10, stringResource(R.string.video_back_10s), tint = Color.White)
                         }
                         IconButton(
                             onClick = { runCatching { if (player.isPlaying) player.pause() else player.play() } },
@@ -246,7 +304,7 @@ fun VideoPlayer(
                             onClick = { runCatching { player.seekTo((player.currentPosition + 10_000L).coerceAtMost(dur.coerceAtLeast(0L))) } },
                             modifier = Modifier.size(48.dp),
                         ) {
-                            Icon(Icons.Filled.Forward10, "Forward 10s", tint = Color.White)
+                            Icon(Icons.Filled.Forward10, stringResource(R.string.video_forward_10s), tint = Color.White)
                         }
                         TextButton(
                             onClick = {
@@ -260,13 +318,13 @@ fun VideoPlayer(
                             onClick = { onFrameGrab(pos) },
                             modifier = Modifier.size(48.dp),
                         ) {
-                            Icon(Icons.Filled.PhotoCamera, "Save frame", tint = Color.White)
+                            Icon(Icons.Filled.PhotoCamera, stringResource(R.string.video_save_frame), tint = Color.White)
                         }
                         IconButton(
                             onClick = { onTrim(dur) },
                             modifier = Modifier.size(48.dp),
                         ) {
-                            Icon(Icons.Filled.ContentCut, "Trim", tint = Color.White)
+                            Icon(Icons.Filled.ContentCut, stringResource(R.string.video_trim_title), tint = Color.White)
                         }
                         if (ctx.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
                             IconButton(
@@ -279,7 +337,7 @@ fun VideoPlayer(
                                 },
                                 modifier = Modifier.size(48.dp),
                             ) {
-                                Icon(Icons.Filled.PictureInPictureAlt, "Picture in picture", tint = Color.White)
+                                Icon(Icons.Filled.PictureInPictureAlt, stringResource(R.string.video_pip), tint = Color.White)
                             }
                         }
                     }
@@ -357,16 +415,19 @@ object FrameGrabber {
 
 /* ------------------------------ Trim (save as copy) ------------------------------ */
 object VideoTrimmer {
-    /** Re-exports [startMs, endMs] to a temp file, then publishes it via MediaStore. Cancellable; the source is never touched. */
+    /** Re-exports [startMs, endMs] with optional speed/mute to a temp file, then publishes it via MediaStore. Cancellable; the source is never touched. */
     @OptIn(androidx.media3.common.util.UnstableApi::class)
     suspend fun trim(
         ctx: Context,
         source: Uri,
         startMs: Long,
         endMs: Long,
+        speed: Float = 1f,
+        muteAudio: Boolean = false,
         onProgress: (Float) -> Unit,
     ): FarResult<Uri> {
         if (endMs <= startMs) return FarResult.Err(FarError.InvalidInput("trim range"))
+        val safeSpeed = speed.coerceIn(0.25f, 4f)
         val tmp = File(ctx.cacheDir, "trim_${System.currentTimeMillis()}.mp4")
         val exported = withContext(Dispatchers.Main) {
             suspendCancellableCoroutine<FarResult<Unit>> { cont ->
@@ -384,7 +445,13 @@ object VideoTrimmer {
                         if (cont.isActive) cont.resume(FarResult.Err(FarError.Io(code = "FG-TRIM-${e.errorCodeName}")))
                     }
                 }).build()
-                t.start(EditedMediaItem.Builder(item).build(), tmp.absolutePath)
+
+                val editedBuilder = EditedMediaItem.Builder(item).setRemoveAudio(muteAudio)
+                if (abs(safeSpeed - 1f) > 0.05f) {
+                    val audioProcessors = if (muteAudio) emptyList() else listOf(SonicAudioProcessor().apply { setSpeed(safeSpeed) })
+                    editedBuilder.setEffects(Effects(audioProcessors, listOf(SpeedChangeEffect(safeSpeed))))
+                }
+                t.start(editedBuilder.build(), tmp.absolutePath)
                 cont.invokeOnCancellation {
                     t.cancel()
                     tmp.delete()
@@ -426,14 +493,16 @@ fun TrimPanel(
     durationMs: Long,
     busy: Boolean,
     progress: Float?,
-    onSave: (Long, Long) -> Unit,
+    onSave: (startMs: Long, endMs: Long, speed: Float, muteAudio: Boolean) -> Unit,
     onCancel: () -> Unit,
 ) {
     var range by remember(durationMs) { mutableStateOf(0f..1f) }
+    var speed by remember { mutableFloatStateOf(1f) }
+    var muteAudio by remember { mutableStateOf(false) }
     val safeDur = durationMs.coerceAtLeast(1000L)
     CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
         Column(Modifier.navigationBarsPadding().padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Trim video", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+            Text(stringResource(R.string.video_trim_title), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
             RangeSlider(value = range, onValueChange = { range = it }, enabled = !busy)
             Text(
                 "${clock((range.start * safeDur).toLong())} – ${clock((range.endInclusive * safeDur).toLong())}",
@@ -441,7 +510,35 @@ fun TrimPanel(
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
-                "Saved as a new copy. The original stays untouched.",
+                stringResource(R.string.video_trim_speed),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(speeds) { sp ->
+                    FarFilterPill(
+                        label = "${sp}×",
+                        selected = abs(speed - sp) < 0.05f,
+                        onClick = { if (!busy) speed = sp },
+                        modifier = Modifier.testTag("trim_speed_${sp}"),
+                    )
+                }
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    stringResource(R.string.video_trim_mute),
+                    Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Switch(
+                    checked = muteAudio,
+                    onCheckedChange = { if (!busy) muteAudio = it },
+                    modifier = Modifier.testTag("trim_mute_switch"),
+                )
+            }
+            Text(
+                stringResource(R.string.video_trim_untouched_note),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -452,7 +549,9 @@ fun TrimPanel(
                 }
                 if (!busy) {
                     TextButton(
-                        onClick = { onSave((range.start * safeDur).toLong(), (range.endInclusive * safeDur).toLong()) },
+                        onClick = {
+                            onSave((range.start * safeDur).toLong(), (range.endInclusive * safeDur).toLong(), speed, muteAudio)
+                        },
                         modifier = Modifier.defaultMinSize(minHeight = 48.dp),
                     ) {
                         Text(stringResource(R.string.editor_save_copy))

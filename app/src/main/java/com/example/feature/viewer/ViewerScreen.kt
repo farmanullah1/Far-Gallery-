@@ -96,13 +96,13 @@ import com.example.core.media.QuickExifInfo
 import com.example.ui.feedback.ErrorAction
 import com.example.ui.feedback.ErrorCard
 import com.example.ui.feedback.ErrorInfo
+import com.example.ui.glass.FarGlassState
 import com.example.ui.glass.GlassKind
 import com.example.ui.glass.glass
 import com.example.ui.glass.glassSource
 import com.example.ui.theme.FarSpacing
 import com.example.ui.theme.LocalHapticsEnabled
 import com.example.ui.theme.MonoFont
-import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
@@ -122,7 +122,7 @@ data class ViewerItem(
 fun ViewerScreen(
     items: List<ViewerItem>,
     startIndex: Int,
-    glass: HazeState,
+    glass: FarGlassState,
     onClose: () -> Unit,
     onFavorite: (ViewerItem) -> Unit,
     onShare: (ViewerItem) -> Unit,
@@ -133,6 +133,7 @@ fun ViewerScreen(
     onAddToAlbum: ((ViewerItem) -> Unit)? = null,
     onCompare: ((ViewerItem) -> Unit)? = null,
     onOpenWith: ((ViewerItem) -> Unit)? = null,
+    onPageChanged: ((ViewerItem) -> Unit)? = null,
     imageModifier: @Composable (ViewerItem) -> Modifier = { Modifier },
     modifier: Modifier = Modifier,
 ) {
@@ -168,6 +169,9 @@ fun ViewerScreen(
     var histogramLoading by remember { mutableStateOf(false) }
 
     val currentItem = items.getOrNull(pager.currentPage)
+    LaunchedEffect(currentItem?.id) {
+        currentItem?.let { onPageChanged?.invoke(it) }
+    }
     LaunchedEffect(currentItem?.uri, showExifPill) {
         val parsed = currentItem?.uri?.let(::safeParseMediaUri)
         if (showExifPill && currentItem != null && !currentItem.isVideo && parsed != null) {
