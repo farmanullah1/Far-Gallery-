@@ -10,8 +10,10 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.MediaStore
 import android.provider.Settings
+import androidx.core.content.IntentCompat
 import com.example.core.common.FarResult
 import com.example.core.common.farCatching
+import java.io.FileNotFoundException
 
 /** What an incoming Intent is asking Far Gallery to do. Classification does NO I/O. */
 sealed interface IncomingRoute {
@@ -73,8 +75,8 @@ object IntentRouter {
         }
     }
 
-    @Suppress("DEPRECATION")
-    private fun outputUri(i: Intent): Uri? = runCatching { i.getParcelableExtra<Uri>(MediaStore.EXTRA_OUTPUT) }.getOrNull()
+    private fun outputUri(i: Intent): Uri? =
+        runCatching { IntentCompat.getParcelableExtra(i, MediaStore.EXTRA_OUTPUT, Uri::class.java) }.getOrNull()
 }
 
 /** Result helpers so callers always get a correct, permission-granted reply. */
@@ -98,8 +100,10 @@ object IntentResults {
         val r: ContentResolver = activity.contentResolver
         val out = Intent().addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         if (request.output != null) {
-            r.openInputStream(saved)!!.use { input ->
-                r.openOutputStream(request.output, "w")!!.use { input.copyTo(it) }
+            val input = r.openInputStream(saved) ?: throw FileNotFoundException("captured stream missing")
+            input.use { src ->
+                val target = r.openOutputStream(request.output, "w") ?: throw FileNotFoundException("output stream missing")
+                target.use { dst -> src.copyTo(dst) }
             }
             r.delete(saved, null, null)
         } else {

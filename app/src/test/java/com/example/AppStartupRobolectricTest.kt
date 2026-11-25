@@ -79,18 +79,29 @@ class AppStartupRobolectricTest {
         composeRule.onNodeWithTag("onboarding_skip_button").assertIsDisplayed().performClick()
 
         composeRule.waitUntil(timeoutMillis = 10_000) {
-            composeRule.onAllNodesWithTag("tab_albums").fetchSemanticsNodes().isNotEmpty()
+            composeRule.onAllNodesWithTag("photos_sub_albums").fetchSemanticsNodes().isNotEmpty()
         }
-        composeRule.onNodeWithTag("tab_albums").performClick()
+        composeRule.onNodeWithTag("photos_sub_albums").performClick()
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithTag("tab_search").performClick()
+        composeRule.onNodeWithTag("photos_sub_search").performClick()
         composeRule.waitForIdle()
 
         composeRule.onNodeWithTag("tab_files").performClick()
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithTag("tab_photos").performClick()
+        composeRule.onNodeWithTag("tab_camera").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("camera_close_button").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("camera_close_button").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("photos_sub_library").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("photos_sub_library").performClick()
+        composeRule.waitForIdle()
+
+        vm.update { it.copy(theme = ThemeMode.HighContrast) }
         composeRule.waitForIdle()
 
         vm.update { it.copy(theme = ThemeMode.Amoled) }

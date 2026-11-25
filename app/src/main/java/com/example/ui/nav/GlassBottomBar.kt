@@ -15,7 +15,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -25,18 +25,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.PhotoAlbum
-import androidx.compose.material.icons.filled.PhotoCamera
-import androidx.compose.material.icons.filled.PhotoLibrary
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.outlined.Folder
-import androidx.compose.material.icons.outlined.PhotoAlbum
-import androidx.compose.material.icons.outlined.PhotoLibrary
-import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -47,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -57,11 +47,13 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.ui.glass.FarGlassState
 import com.example.ui.glass.GlassKind
 import com.example.ui.glass.glass
+import com.example.ui.theme.FarIcons
 import com.example.ui.theme.FarMotion
 import com.example.ui.theme.LocalHapticsEnabled
 import com.example.ui.theme.LocalIsDark
@@ -74,19 +66,77 @@ enum class FarTab(
     val filled: ImageVector,
     val tag: String,
 ) {
-    Photos(R.string.nav_photos, Icons.Outlined.PhotoLibrary, Icons.Filled.PhotoLibrary, "tab_photos"),
-    Albums(R.string.nav_albums, Icons.Outlined.PhotoAlbum, Icons.Filled.PhotoAlbum, "tab_albums"),
-    Search(R.string.nav_search, Icons.Outlined.Search, Icons.Filled.Search, "tab_search"),
-    Files(R.string.nav_files, Icons.Outlined.Folder, Icons.Filled.Folder, "tab_files"),
+    Photos(R.string.nav_photos, FarIcons.PhotosOutlined, FarIcons.PhotosFilled, "tab_photos"),
+    Camera(R.string.nav_camera, FarIcons.CameraOutlined, FarIcons.CameraFilled, "tab_camera"),
+    Files(R.string.nav_files, FarIcons.FilesOutlined, FarIcons.FilesFilled, "tab_files"),
 }
 
-/** Floating glass tab pill + detached circular camera button. Slides away when [visible] = false. */
+enum class PhotosSubTab(val labelRes: Int, val tag: String) {
+    Library(R.string.photos_sub_library, "photos_sub_library"),
+    Albums(R.string.photos_sub_albums, "photos_sub_albums"),
+    Search(R.string.photos_sub_search, "photos_sub_search"),
+}
+
+/** Top segmented glass switcher inside the Photos tab (Library / Albums / Search). */
+@Composable
+fun PhotosSubNavBar(
+    glass: FarGlassState,
+    selected: PhotosSubTab,
+    onSelect: (PhotosSubTab) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val semantic = LocalSemanticColors.current
+    val haptic = LocalHapticFeedback.current
+    val hapticsOn = LocalHapticsEnabled.current
+    Row(
+        modifier
+            .fillMaxWidth()
+            .glass(glass, RoundedCornerShape(22.dp), GlassKind.Chip)
+            .border(0.75.dp, semantic.cardBorder, RoundedCornerShape(22.dp))
+            .padding(3.dp),
+    ) {
+        PhotosSubTab.entries.forEach { sub ->
+            val sel = sub == selected
+            val label = stringResource(sub.labelRes)
+            Box(
+                Modifier
+                    .weight(1f)
+                    .defaultMinSize(minHeight = 40.dp)
+                    .clip(RoundedCornerShape(19.dp))
+                    .background(if (sel) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else Color.Transparent)
+                    .clickable {
+                        if (!sel) {
+                            if (hapticsOn) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onSelect(sub)
+                        }
+                    }
+                    .padding(vertical = 8.dp, horizontal = 6.dp)
+                    .testTag(sub.tag)
+                    .semantics {
+                        role = Role.Tab
+                        this.selected = sel
+                        contentDescription = label
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    label,
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+/** Floating 3-destination glass bottom bar (Photos / Camera / Files). */
 @Composable
 fun GlassBottomBar(
     glass: FarGlassState,
     selected: FarTab,
     onSelect: (FarTab) -> Unit,
-    onCamera: () -> Unit,
     visible: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
@@ -101,23 +151,21 @@ fun GlassBottomBar(
             Modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                .padding(horizontal = 24.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TabPill(glass, selected, onSelect, Modifier.weight(1f))
-            CameraButton(glass, onCamera)
+            TabPill(glass, selected, onSelect, Modifier.fillMaxWidth())
         }
     }
 }
 
-/** Tablet / foldable navigation rail with detached camera action button. */
+/** Tablet / foldable 3-destination navigation rail. */
 @Composable
 fun GlassNavRail(
     glass: FarGlassState,
     selected: FarTab,
     onSelect: (FarTab) -> Unit,
-    onCamera: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val haptic = LocalHapticFeedback.current
@@ -131,7 +179,7 @@ fun GlassNavRail(
             .navigationBarsPadding()
             .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.Center,
     ) {
         Column(
             Modifier
@@ -140,7 +188,7 @@ fun GlassNavRail(
                 .border(0.75.dp, semantic.cardBorder, RoundedCornerShape(26.dp))
                 .padding(vertical = 10.dp, horizontal = 6.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             FarTab.entries.forEach { tab ->
                 val isSel = tab == selected
@@ -149,7 +197,7 @@ fun GlassNavRail(
                 Column(
                     Modifier
                         .fillMaxWidth()
-                        .height(52.dp)
+                        .height(54.dp)
                         .clip(RoundedCornerShape(18.dp))
                         .background(
                             if (isSel) MaterialTheme.colorScheme.primary.copy(alpha = if (isDark) 0.24f else 0.14f)
@@ -176,14 +224,12 @@ fun GlassNavRail(
                         label,
                         style = MaterialTheme.typography.labelMedium,
                         maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        overflow = TextOverflow.Ellipsis,
                         color = fg,
                     )
                 }
             }
         }
-        Spacer(Modifier.weight(1f))
-        CameraButton(glass, onCamera)
     }
 }
 
@@ -195,6 +241,11 @@ private fun TabPill(glass: FarGlassState, selected: FarTab, onSelect: (FarTab) -
     val isDark = LocalIsDark.current
     val semantic = LocalSemanticColors.current
     val tabs = FarTab.entries
+    val selectedColor = if (!isDark && MaterialTheme.colorScheme.primary.luminance() > 0.45f) {
+        MaterialTheme.colorScheme.onSurface
+    } else {
+        MaterialTheme.colorScheme.primary
+    }
     BoxWithConstraints(
         modifier
             .height(56.dp)
@@ -218,7 +269,7 @@ private fun TabPill(glass: FarGlassState, selected: FarTab, onSelect: (FarTab) -
             tabs.forEach { tab ->
                 val isSel = tab == selected
                 val label = stringResource(tab.labelRes)
-                val fg = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                val fg = if (isSel) selectedColor else MaterialTheme.colorScheme.onSurfaceVariant
                 Column(
                     Modifier
                         .width(tabWidth)
@@ -244,34 +295,11 @@ private fun TabPill(glass: FarGlassState, selected: FarTab, onSelect: (FarTab) -
                         label,
                         style = MaterialTheme.typography.labelMedium,
                         maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        overflow = TextOverflow.Ellipsis,
                         color = fg,
                     )
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun CameraButton(glass: FarGlassState, onClick: () -> Unit) {
-    val haptic = LocalHapticFeedback.current
-    val hapticsOn = LocalHapticsEnabled.current
-    val semantic = LocalSemanticColors.current
-    val desc = stringResource(R.string.cd_open_camera)
-    Box(
-        Modifier
-            .size(56.dp)
-            .glass(glass, CircleShape, GlassKind.Bar)
-            .border(0.75.dp, semantic.cardBorder, CircleShape)
-            .testTag("camera_shortcut_button")
-            .semantics { role = Role.Button; contentDescription = desc }
-            .clickable {
-                if (hapticsOn) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                onClick()
-            },
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(Icons.Filled.PhotoCamera, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurface)
     }
 }

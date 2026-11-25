@@ -421,7 +421,8 @@ object EditorEngine {
             val r = ctx.contentResolver
             val out = r.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: throw java.io.IOException("insert failed")
             try {
-                r.openOutputStream(out)!!.use {
+                val outStream = r.openOutputStream(out) ?: throw java.io.IOException("output stream unavailable")
+                outStream.use {
                     if (!bmp.compress(Bitmap.CompressFormat.JPEG, quality, it)) throw java.io.IOException("encode failed")
                 }
                 if (!stripExif && sourceUri != null) {
@@ -798,16 +799,15 @@ fun EditorScreen(
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
                             val ratios = listOf(
-                                null to R.string.editor_preset_original,
-                                1f to null,
-                                (4f / 3f) to null,
-                                1.5f to null,
-                                (16f / 9f) to null,
+                                Triple(null as Float?, R.string.editor_preset_original, ""),
+                                Triple(1f, null, "1:1"),
+                                Triple(4f / 3f, null, "4:3"),
+                                Triple(1.5f, null, "3:2"),
+                                Triple(16f / 9f, null, "16:9"),
                             )
-                            val labels = listOf(null, "1:1", "4:3", "3:2", "16:9")
                             items(ratios.size) { idx ->
-                                val (r, res) = ratios[idx]
-                                val label = if (res != null) stringResource(res) else labels[idx]!!
+                                val (r, res, fixedLabel) = ratios[idx]
+                                val label = if (res != null) stringResource(res) else fixedLabel
                                 TextButton(
                                     onClick = {
                                         if (hapticsOn) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)

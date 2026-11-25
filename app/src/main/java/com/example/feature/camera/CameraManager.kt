@@ -57,8 +57,12 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.app.IncomingRoute
 import com.example.core.common.LocalDiagnostics
+import com.example.core.database.FarDatabase
+import com.example.core.media.MediaScanner
+import com.example.feature.settings.SettingsStore
 import com.example.ui.feedback.ErrorAction
 import com.example.ui.feedback.ErrorInfo
+import com.google.mlkit.common.sdkinternal.MlKitContext
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.common.InputImage
 import kotlinx.coroutines.Job
@@ -117,9 +121,12 @@ class FarCameraManager(private val context: Context) {
         )
     }.getOrNull()
 
+    @Volatile
+    var mirrorFrontCamera: Boolean = true
+
     fun setMode(mode: CameraMode) {
         controller.setEnabledUseCases(
-            if (mode == CameraMode.Video || mode == CameraMode.SloMo) CameraController.VIDEO_CAPTURE
+            if (mode == CameraMode.Video) CameraController.VIDEO_CAPTURE
             else CameraController.IMAGE_CAPTURE
         )
     }
@@ -166,11 +173,14 @@ class FarCameraManager(private val context: Context) {
             put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
             put(MediaStore.Images.Media.RELATIVE_PATH, "DCIM/Camera")
         }
+        val metadata = ImageCapture.Metadata().apply {
+            isReversedHorizontal = mirrorFrontCamera && controller.cameraSelector == CameraSelector.DEFAULT_FRONT_CAMERA
+        }
         val opts = ImageCapture.OutputFileOptions.Builder(
             context.contentResolver,
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
             values,
-        ).build()
+        ).setMetadata(metadata).build()
         runCatching {
             controller.takePicture(opts, mainExecutor, object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(r: ImageCapture.OutputFileResults) {
@@ -215,6 +225,7 @@ class FarCameraManager(private val context: Context) {
 
     @androidx.annotation.OptIn(androidx.camera.core.ExperimentalGetImage::class)
     fun enableQr(onFound: (String) -> Unit) {
+        runCatching { MlKitContext.initializeIfNeeded(context.applicationContext) }
         val scanner = BarcodeScanning.getClient()
         controller.setEnabledUseCases(CameraController.IMAGE_CAPTURE or CameraController.IMAGE_ANALYSIS)
         controller.setImageAnalysisBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
@@ -273,8 +284,21 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     private var burstJob: Job? = null
     var captureRequest: IncomingRoute.Capture? = null
     var onCaptured: ((Uri) -> Unit)? = null
+    @Volatile
+    var volumeKeyShutterEnabled: Boolean = true
+    private var settingsSynced = false
 
     init {
+        viewModelScope.launch {
+            SettingsStore(app).flow.collect { s ->
+                manager.mirrorFrontCamera = s.mirrorSelfie
+                volumeKeyShutterEnabled = s.volumeKeyShutter
+                if (!settingsSynced) {
+                    settingsSynced = true
+                    _state.update { it.copy(gridOn = s.cameraGrid) }
+                }
+            }
+        }
         initCamera()
     }
 
@@ -421,7 +445,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     fun shutter() {
         val s = _state.value
         when (s.mode) {
-            CameraMode.Video, CameraMode.SloMo -> if (s.recording) stopVideo() else startVideo()
+            CameraMode.Video -> if (s.recording) stopVideo() else startVideo()
             else -> if (s.countdown != null) {
                 timerJob?.cancel()
                 _state.update { it.copy(countdown = null) }
@@ -458,6 +482,9 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                 val res = manager.takePhotoAwait(prefix = "BURST_")
                 res.onSuccess { uri ->
                     _state.update { it.copy(lastCaptureUri = uri.toString(), lastCaptureWasScan = false) }
+                    viewModelScope.launch {
+                        MediaScanner.markCapturedByFar(getApplication(), FarDatabase.get(getApplication()), uri)
+                    }
                     onCaptured?.invoke(uri)
                 }.onFailure { e ->
                     LocalDiagnostics.recordEvent(getApplication(), "FG-CAM-BURST", "camera_burst", e.javaClass.simpleName)
@@ -497,6 +524,9 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         manager.takePhotoAwait(prefix = if (isScan) "SCAN_" else "IMG_").fold(
             onSuccess = { uri ->
                 _state.update { it.copy(lastCaptureUri = uri.toString(), lastCaptureWasScan = isScan) }
+                viewModelScope.launch {
+                    MediaScanner.markCapturedByFar(getApplication(), FarDatabase.get(getApplication()), uri)
+                }
                 onCaptured?.invoke(uri)
             },
             onFailure = { e ->
@@ -558,6 +588,9 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                     } else {
                         val uri = e.outputResults.outputUri
                         _state.update { it.copy(lastCaptureUri = uri.toString(), lastCaptureWasScan = false) }
+                        viewModelScope.launch {
+                            MediaScanner.markCapturedByFar(getApplication(), FarDatabase.get(getApplication()), uri)
+                        }
                         onCaptured?.invoke(uri)
                     }
                 }

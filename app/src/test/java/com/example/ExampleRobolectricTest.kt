@@ -280,11 +280,12 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun themeMode_nextCyclesAllFourModes() {
+    fun themeMode_nextCyclesAllModes() {
         assertEquals(ThemeMode.Light, ThemeMode.System.next())
         assertEquals(ThemeMode.Dark, ThemeMode.Light.next())
         assertEquals(ThemeMode.Amoled, ThemeMode.Dark.next())
-        assertEquals(ThemeMode.System, ThemeMode.Amoled.next())
+        assertEquals(ThemeMode.HighContrast, ThemeMode.Amoled.next())
+        assertEquals(ThemeMode.System, ThemeMode.HighContrast.next())
     }
 
     @Test

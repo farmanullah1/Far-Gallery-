@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.StatFs
 import android.provider.MediaStore
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
@@ -400,7 +401,8 @@ object FrameGrabber {
             val r = ctx.contentResolver
             val out = r.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: throw java.io.IOException("insert failed")
             try {
-                r.openOutputStream(out)!!.use { bmp.compress(Bitmap.CompressFormat.JPEG, 95, it) }
+                val outStream = r.openOutputStream(out) ?: throw java.io.IOException("output stream unavailable")
+                outStream.use { bmp.compress(Bitmap.CompressFormat.JPEG, 95, it) }
                 r.update(out, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null)
             } catch (e: Exception) {
                 r.delete(out, null, null)
@@ -428,6 +430,8 @@ object VideoTrimmer {
     ): FarResult<Uri> {
         if (endMs <= startMs) return FarResult.Err(FarError.InvalidInput("trim range"))
         val safeSpeed = speed.coerceIn(0.25f, 4f)
+        val spaceErr = checkCacheSpace(ctx, source)
+        if (spaceErr != null) return FarResult.Err(spaceErr)
         val tmp = File(ctx.cacheDir, "trim_${System.currentTimeMillis()}.mp4")
         val exported = withContext(Dispatchers.Main) {
             suspendCancellableCoroutine<FarResult<Unit>> { cont ->
@@ -473,7 +477,8 @@ object VideoTrimmer {
                 val r = ctx.contentResolver
                 val out = r.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values) ?: throw java.io.IOException("insert failed")
                 try {
-                    tmp.inputStream().use { i -> r.openOutputStream(out)!!.use { i.copyTo(it) } }
+                    val outStream = r.openOutputStream(out) ?: throw java.io.IOException("output stream unavailable")
+                    tmp.inputStream().use { i -> outStream.use { i.copyTo(it) } }
                     r.update(out, ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }, null, null)
                 } catch (e: Exception) {
                     r.delete(out, null, null)
@@ -484,6 +489,15 @@ object VideoTrimmer {
                 out
             }
         }
+    }
+
+    private suspend fun checkCacheSpace(ctx: Context, source: Uri): FarError.StorageFull? = withContext(Dispatchers.IO) {
+        val sourceSize = runCatching {
+            ctx.contentResolver.openAssetFileDescriptor(source, "r")?.use { it.length }
+        }.getOrNull()?.takeIf { it > 0L } ?: 0L
+        val neededBytes = maxOf(64L * 1024 * 1024, sourceSize + 32L * 1024 * 1024)
+        val availBytes = runCatching { StatFs(ctx.cacheDir.absolutePath).availableBytes }.getOrDefault(Long.MAX_VALUE)
+        if (availBytes < neededBytes) FarError.StorageFull(neededBytes, availBytes) else null
     }
 }
 

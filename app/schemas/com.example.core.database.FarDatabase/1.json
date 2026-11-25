@@ -1,0 +1,187 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 1,
+    "identityHash": "v1_schema_snapshot",
+    "entities": [
+      {
+        "tableName": "album",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `description` TEXT, `createdAt` INTEGER NOT NULL, `pinned` INTEGER NOT NULL, `sortOrder` INTEGER NOT NULL, `coverMediaId` INTEGER)",
+        "fields": [
+          { "fieldPath": "id", "columnName": "id", "affinity": "INTEGER", "notNull": true },
+          { "fieldPath": "name", "columnName": "name", "affinity": "TEXT", "notNull": true },
+          { "fieldPath": "description", "columnName": "description", "affinity": "TEXT" },
+          { "fieldPath": "createdAt", "columnName": "createdAt", "affinity": "INTEGER", "notNull": true },
+          { "fieldPath": "pinned", "columnName": "pinned", "affinity": "INTEGER", "notNull": true },
+          { "fieldPath": "sortOrder", "columnName": "sortOrder", "affinity": "INTEGER", "notNull": true },
+          { "fieldPath": "coverMediaId", "columnName": "coverMediaId", "affinity": "INTEGER" }
+        ],
+        "primaryKey": { "autoGenerate": true, "columnNames": ["id"] }
+      },
+      {
+        "tableName": "album_media",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`albumId` INTEGER NOT NULL, `mediaId` INTEGER NOT NULL, `position` INTEGER NOT NULL, PRIMARY KEY(`albumId`, `mediaId`))",
+        "fields": [
+          { "fieldPath": "albumId", "columnName": "albumId", "affinity": "INTEGER", "notNull": true },
+          { "fieldPath": "mediaId", "columnName": "mediaId", "affinity": "INTEGER", "notNull": true },
+          { "fieldPath": "position", "columnName": "position", "affinity": "INTEGER", "notNull": true }
+        ],
+        "primaryKey": { "autoGenerate": false, "columnNames": ["albumId", "mediaId"] },
+        "indices": [
+          {
+            "name": "index_album_media_mediaId",
+            "unique": false,
+            "columnNames": ["mediaId"],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_album_media_mediaId` ON `${TABLE_NAME}` (`mediaId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "favorite",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`mediaId` INTEGER NOT NULL, `addedAt` INTEGER NOT NULL, PRIMARY KEY(`mediaId`))",
+        "fields": [
+          { "fieldPath": "mediaId", "columnName": "mediaId", "affinity": "INTEGER", "notNull": true },
+          { "fieldPath": "addedAt", "columnName": "addedAt", "affinity": "INTEGER", "notNull": true }
+        ],
+        "primaryKey": { "autoGenerate": false, "columnNames": ["mediaId"] }
+      },
+      {
+        "tableName": "tag",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `color` INTEGER NOT NULL)",
+        "fields": [
+          { "fieldPath": "id", "columnName": "id", "affinity": "INTEGER", "notNull": true },
+          { "fieldPath": "name", "columnName": "name", "affinity": "TEXT", "notNull": true },
+          { "fieldPath": "color", "columnName": "color", "affinity": "INTEGER", "notNull": true }
+        ],
+        "primaryKey": { "autoGenerate": true, "columnNames": ["id"] }
+      },
+      {
+        "tableName": "media_tag",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`mediaId` INTEGER NOT NULL, `tagId` INTEGER NOT NULL, PRIMARY KEY(`mediaId`, `tagId`))",
+        "fields": [
+          { "fieldPath": "mediaId", "columnName": "mediaId", "affinity": "INTEGER", "notNull": true },
+          { "fieldPath": "tagId", "columnName": "tagId", "affinity": "INTEGER", "notNull": true }
+        ],
+        "primaryKey": { "autoGenerate": false, "columnNames": ["mediaId", "tagId"] },
+        "indices": [
+          {
+            "name": "index_media_tag_tagId",
+            "unique": false,
+            "columnNames": ["tagId"],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_media_tag_tagId` ON `${TABLE_NAME}` (`tagId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "excluded_folder",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`relativePath` TEXT NOT NULL, PRIMARY KEY(`relativePath`))",
+        "fields": [
+          { "fieldPath": "relativePath", "columnName": "relativePath", "affinity": "TEXT", "notNull": true }
+        ],
+        "primaryKey": { "autoGenerate": false, "columnNames": ["relativePath"] }
+      },
+      {
+        "tableName": "recent_view",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`mediaId` INTEGER NOT NULL, `viewedAt` INTEGER NOT NULL, PRIMARY KEY(`mediaId`))",
+        "fields": [
+          { "fieldPath": "mediaId", "columnName": "mediaId", "affinity": "INTEGER", "notNull": true },
+          { "fieldPath": "viewedAt", "columnName": "viewedAt", "affinity": "INTEGER", "notNull": true }
+        ],
+        "primaryKey": { "autoGenerate": false, "columnNames": ["mediaId"] }
+      },
+      {
+        "tableName": "search_history",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`query` TEXT NOT NULL, `at` INTEGER NOT NULL, PRIMARY KEY(`query`))",
+        "fields": [
+          { "fieldPath": "query", "columnName": "query", "affinity": "TEXT", "notNull": true },
+          { "fieldPath": "at", "columnName": "at", "affinity": "INTEGER", "notNull": true }
+        ],
+        "primaryKey": { "autoGenerate": false, "columnNames": ["query"] }
+      },
+      {
+        "tableName": "saved_search",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `queryJson` TEXT NOT NULL)",
+        "fields": [
+          { "fieldPath": "id", "columnName": "id", "affinity": "INTEGER", "notNull": true },
+          { "fieldPath": "name", "columnName": "name", "affinity": "TEXT", "notNull": true },
+          { "fieldPath": "queryJson", "columnName": "queryJson", "affinity": "TEXT", "notNull": true }
+        ],
+        "primaryKey": { "autoGenerate": true, "columnNames": ["id"] }
+      },
+      {
+        "tableName": "folder_grant",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`treeUri` TEXT NOT NULL, `displayName` TEXT NOT NULL, `addedAt` INTEGER NOT NULL, `lastValidated` INTEGER NOT NULL, PRIMARY KEY(`treeUri`))",
+        "fields": [
+          { "fieldPath": "treeUri", "columnName": "treeUri", "affinity": "TEXT", "notNull": true },
+          { "fieldPath": "displayName", "columnName": "displayName", "affinity": "TEXT", "notNull": true },
+          { "fieldPath": "addedAt", "columnName": "addedAt", "affinity": "INTEGER", "notNull": true },
+          { "fieldPath": "lastValidated", "columnName": "lastValidated", "affinity": "INTEGER", "notNull": true }
+        ],
+        "primaryKey": { "autoGenerate": false, "columnNames": ["treeUri"] }
+      },
+      {
+        "tableName": "file_favorite",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`documentUri` TEXT NOT NULL, `name` TEXT NOT NULL, PRIMARY KEY(`documentUri`))",
+        "fields": [
+          { "fieldPath": "documentUri", "columnName": "documentUri", "affinity": "TEXT", "notNull": true },
+          { "fieldPath": "name", "columnName": "name", "affinity": "TEXT", "notNull": true }
+        ],
+        "primaryKey": { "autoGenerate": false, "columnNames": ["documentUri"] }
+      },
+      {
+        "tableName": "edit_recipe",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `mediaId` INTEGER NOT NULL, `sourceSize` INTEGER NOT NULL, `operationsJson` TEXT NOT NULL, `outputUri` TEXT, `version` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL)",
+        "fields": [
+          { "fieldPath": "id", "columnName": "id", "affinity": "INTEGER", "notNull": true },
+          { "fieldPath": "mediaId", "columnName": "mediaId", "affinity": "INTEGER", "notNull": true },
+          { "fieldPath": "sourceSize", "columnName": "sourceSize", "affinity": "INTEGER", "notNull": true },
+          { "fieldPath": "operationsJson", "columnName": "operationsJson", "affinity": "TEXT", "notNull": true },
+          { "fieldPath": "outputUri", "columnName": "outputUri", "affinity": "TEXT" },
+          { "fieldPath": "version", "columnName": "version", "affinity": "INTEGER", "notNull": true },
+          { "fieldPath": "updatedAt", "columnName": "updatedAt", "affinity": "INTEGER", "notNull": true }
+        ],
+        "primaryKey": { "autoGenerate": true, "columnNames": ["id"] },
+        "indices": [
+          {
+            "name": "index_edit_recipe_mediaId",
+            "unique": false,
+            "columnNames": ["mediaId"],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_edit_recipe_mediaId` ON `${TABLE_NAME}` (`mediaId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "operation",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `type` TEXT NOT NULL, `status` TEXT NOT NULL, `done` INTEGER NOT NULL, `total` INTEGER NOT NULL, `errorCode` TEXT, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          { "fieldPath": "id", "columnName": "id", "affinity": "TEXT", "notNull": true },
+          { "fieldPath": "type", "columnName": "type", "affinity": "TEXT", "notNull": true },
+          { "fieldPath": "status", "columnName": "status", "affinity": "TEXT", "notNull": true },
+          { "fieldPath": "done", "columnName": "done", "affinity": "INTEGER", "notNull": true },
+          { "fieldPath": "total", "columnName": "total", "affinity": "INTEGER", "notNull": true },
+          { "fieldPath": "errorCode", "columnName": "errorCode", "affinity": "TEXT" },
+          { "fieldPath": "updatedAt", "columnName": "updatedAt", "affinity": "INTEGER", "notNull": true }
+        ],
+        "primaryKey": { "autoGenerate": false, "columnNames": ["id"] }
+      },
+      {
+        "tableName": "ocr_index",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`mediaId` INTEGER NOT NULL, `mediaUri` TEXT NOT NULL, `extractedText` TEXT NOT NULL, `indexedAt` INTEGER NOT NULL, PRIMARY KEY(`mediaId`))",
+        "fields": [
+          { "fieldPath": "mediaId", "columnName": "mediaId", "affinity": "INTEGER", "notNull": true },
+          { "fieldPath": "mediaUri", "columnName": "mediaUri", "affinity": "TEXT", "notNull": true },
+          { "fieldPath": "extractedText", "columnName": "extractedText", "affinity": "TEXT", "notNull": true },
+          { "fieldPath": "indexedAt", "columnName": "indexedAt", "affinity": "INTEGER", "notNull": true }
+        ],
+        "primaryKey": { "autoGenerate": false, "columnNames": ["mediaId"] }
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'v1_schema_snapshot')"
+    ]
+  }
+}

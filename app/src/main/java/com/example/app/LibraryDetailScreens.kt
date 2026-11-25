@@ -34,13 +34,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.PhotoAlbum
 import androidx.compose.material.icons.filled.PictureAsPdf
-import androidx.compose.material.icons.filled.RestoreFromTrash
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
@@ -83,10 +83,13 @@ import com.example.core.common.FarResult
 import com.example.core.common.LocalDiagnostics
 import com.example.core.common.safeParseMediaUri
 import com.example.core.database.AlbumEntity
+import com.example.core.database.FolderRuleEntity
 import com.example.core.database.TagEntity
+import com.example.ui.components.FarFilterPill
 import com.example.core.media.ExifScrubber
 import com.example.core.media.MediaRow
 import com.example.core.media.QuickExifInfo
+import com.example.core.storage.Collision
 import com.example.feature.files.FileEntry
 import com.example.feature.files.FilePreview
 import com.example.feature.files.FilesEvent
@@ -411,6 +414,7 @@ fun SubCollectionHeader(
     onBack: () -> Unit,
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
+    actionIcon: androidx.compose.ui.graphics.vector.ImageVector = Icons.Filled.AutoAwesome,
     secondaryActionLabel: String? = null,
     onSecondaryAction: (() -> Unit)? = null,
 ) {
@@ -427,8 +431,11 @@ fun SubCollectionHeader(
                 }
             }
             if (actionLabel != null && onAction != null) {
-                TextButton(onClick = onAction, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) {
-                    Icon(Icons.Filled.RestoreFromTrash, null, Modifier.size(18.dp))
+                TextButton(
+                    onClick = onAction,
+                    modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("collection_primary_action"),
+                ) {
+                    Icon(actionIcon, null, Modifier.size(18.dp))
                     Text(" $actionLabel")
                 }
             }
@@ -436,15 +443,19 @@ fun SubCollectionHeader(
     )
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ExcludedFoldersScreen(
     allFolders: List<String>,
     excluded: Set<String>,
+    rules: List<FolderRuleEntity> = emptyList(),
+    onUpdateRule: (path: String, hidden: Boolean, excludedFromTimeline: Boolean, excludedFromOcr: Boolean) -> Unit = { _, _, _, _ -> },
     onToggleExclude: (String, Boolean) -> Unit,
     onBack: () -> Unit,
 ) {
     BackHandler(onBack = onBack)
     val semantic = LocalSemanticColors.current
+    val ruleByPath = remember(rules) { rules.associateBy { it.relativePath } }
     Column(
         Modifier
             .fillMaxSize()
@@ -466,7 +477,7 @@ fun ExcludedFoldersScreen(
                 .border(0.75.dp, semantic.cardBorder, RoundedCornerShape(16.dp))
                 .padding(14.dp),
         )
-        val combined = (allFolders + excluded).distinct().sorted()
+        val combined = (allFolders + excluded + rules.map { it.relativePath }).distinct().sorted()
         if (combined.isEmpty()) {
             EmptyState(
                 Icons.Filled.Folder,
@@ -479,18 +490,62 @@ fun ExcludedFoldersScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(combined, key = { it }) { path ->
-                    val isExcluded = path in excluded
-                    Row(
+                    val rule = ruleByPath[path]
+                    val exTimeline = rule?.excludedFromTimeline ?: (path in excluded)
+                    val exOcr = rule?.excludedFromOcr ?: false
+                    val isHidden = rule?.hidden ?: false
+                    Column(
                         Modifier
                             .fillMaxWidth()
                             .background(semantic.elevatedSurface, RoundedCornerShape(16.dp))
                             .border(0.75.dp, semantic.cardBorder, RoundedCornerShape(16.dp))
-                            .padding(horizontal = 14.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Icon(Icons.Filled.Folder, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(end = 12.dp))
-                        Text(path, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
-                        Switch(checked = isExcluded, onCheckedChange = { onToggleExclude(path, it) })
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.Folder, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(end = 10.dp))
+                            Text(path, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+                            Switch(
+                                checked = exTimeline || isHidden,
+                                onCheckedChange = { checked ->
+                                    onToggleExclude(path, checked)
+                                    onUpdateRule(path, if (!checked) false else isHidden, checked, if (!checked) exOcr else true)
+                                },
+                            )
+                        }
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            FarFilterPill(
+                                label = stringResource(R.string.folder_rule_timeline),
+                                selected = exTimeline,
+                                onClick = {
+                                    val next = !exTimeline
+                                    onToggleExclude(path, next || isHidden)
+                                    onUpdateRule(path, isHidden, next, exOcr)
+                                },
+                                modifier = Modifier.testTag("folder_rule_timeline_${path.hashCode()}"),
+                            )
+                            FarFilterPill(
+                                label = stringResource(R.string.folder_rule_ocr),
+                                selected = exOcr,
+                                onClick = {
+                                    onUpdateRule(path, isHidden, exTimeline, !exOcr)
+                                },
+                                modifier = Modifier.testTag("folder_rule_ocr_${path.hashCode()}"),
+                            )
+                            FarFilterPill(
+                                label = stringResource(R.string.folder_rule_hidden),
+                                selected = isHidden,
+                                onClick = {
+                                    val next = !isHidden
+                                    onToggleExclude(path, exTimeline || next)
+                                    onUpdateRule(path, next, exTimeline, exOcr)
+                                },
+                                modifier = Modifier.testTag("folder_rule_hidden_${path.hashCode()}"),
+                            )
+                        }
                     }
                 }
             }
@@ -511,6 +566,7 @@ fun FilesTab(
     var renaming by remember { mutableStateOf<FileEntry?>(null) }
     var deleting by remember { mutableStateOf<List<FileEntry>?>(null) }
     var zipping by remember { mutableStateOf<List<FileEntry>?>(null) }
+    var conflicting by remember { mutableStateOf<FilesEvent.AskConflict?>(null) }
     var props by remember { mutableStateOf<FilesEvent.Properties?>(null) }
     var previewing by remember { mutableStateOf<Triple<Uri, String, String>?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -546,6 +602,7 @@ fun FilesTab(
                 is FilesEvent.AskRename -> renaming = e.entry
                 is FilesEvent.AskDelete -> deleting = e.entries
                 is FilesEvent.AskZip -> zipping = e.entries
+                is FilesEvent.AskConflict -> conflicting = e
                 is FilesEvent.Message -> message = e.text
                 is FilesEvent.Properties -> props = e
             }
@@ -563,12 +620,64 @@ fun FilesTab(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             op?.let {
-                OperationProgressSheet(glass, it, onCancel = fvm::cancelOperation)
+                OperationProgressSheet(
+                    glass = glass,
+                    op = it,
+                    onCancel = fvm::cancelOperation,
+                    onTogglePause = fvm::togglePauseOperation,
+                )
             }
             message?.let { m ->
                 GlassToast(glass, m, stringResource(R.string.action_ok), onAction = { message = null })
             }
         }
+    }
+
+    conflicting?.let { c ->
+        AlertDialog(
+            onDismissRequest = { conflicting = null },
+            title = { Text(stringResource(R.string.files_conflict_title)) },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.files_conflict_body,
+                        c.conflictingNames.size,
+                        c.conflictingNames.firstOrNull().orEmpty(),
+                    )
+                )
+            },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    TextButton(
+                        onClick = {
+                            fvm.confirmPasteWithPolicy(Collision.Skip)
+                            conflicting = null
+                        },
+                        modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("conflict_skip"),
+                    ) { Text(stringResource(R.string.files_conflict_skip)) }
+                    TextButton(
+                        onClick = {
+                            fvm.confirmPasteWithPolicy(Collision.Rename)
+                            conflicting = null
+                        },
+                        modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("conflict_keep_both"),
+                    ) { Text(stringResource(R.string.files_conflict_keep_both)) }
+                    TextButton(
+                        onClick = {
+                            fvm.confirmPasteWithPolicy(Collision.Replace)
+                            conflicting = null
+                        },
+                        modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("conflict_replace"),
+                    ) { Text(stringResource(R.string.files_conflict_replace)) }
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { conflicting = null },
+                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                ) { Text(stringResource(R.string.action_cancel)) }
+            },
+        )
     }
 
     renaming?.let { e ->
@@ -662,6 +771,7 @@ fun FilesTab(
         val fileUri = propEvent.uri
         var sha256 by remember(propEvent) { mutableStateOf<String?>(null) }
         var hashing by remember(propEvent) { mutableStateOf(false) }
+        var expectedSha by remember(propEvent) { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { props = null },
             title = { Text(e.name) },
@@ -673,6 +783,7 @@ fun FilesTab(
                     e.modifiedLabel?.let { Text("Modified: $it") }
                     Text("Permissions: rename=${e.canRename}, move=${e.canMove}, delete=${e.canDelete}")
                     if (!e.isDirectory && fileUri != null) {
+                        val digest = sha256
                         when {
                             hashing -> {
                                 LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -682,8 +793,8 @@ fun FilesTab(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                            sha256 != null -> {
-                                val digest = sha256!!
+                            digest != null -> {
+                                val semantic = LocalSemanticColors.current
                                 Text(
                                     "SHA-256: $digest",
                                     style = MaterialTheme.typography.labelMedium.copy(fontFamily = MonoFont),
@@ -699,6 +810,26 @@ fun FilesTab(
                                 ) {
                                     Icon(Icons.Filled.ContentCopy, null, Modifier.size(16.dp))
                                     Text(" " + stringResource(R.string.files_copy_sha256))
+                                }
+                                OutlinedTextField(
+                                    value = expectedSha,
+                                    onValueChange = { expectedSha = it },
+                                    label = { Text(stringResource(R.string.files_verify_sha256_hint)) },
+                                    singleLine = true,
+                                    textStyle = MaterialTheme.typography.labelMedium.copy(fontFamily = MonoFont),
+                                    modifier = Modifier.fillMaxWidth().testTag("files_verify_sha256_input"),
+                                )
+                                val matched = com.example.core.storage.Checksums.matchesSha256(digest, expectedSha)
+                                if (matched != null) {
+                                    Text(
+                                        text = stringResource(
+                                            if (matched) R.string.files_verify_sha256_match
+                                            else R.string.files_verify_sha256_mismatch
+                                        ),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = if (matched) semantic.success else MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.testTag("files_verify_sha256_result"),
+                                    )
                                 }
                             }
                             else -> {

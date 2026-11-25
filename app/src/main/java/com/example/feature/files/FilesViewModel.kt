@@ -24,12 +24,15 @@ import com.example.core.common.userTitle
 import com.example.core.database.FarDatabase
 import com.example.core.database.FileFavorite
 import com.example.core.database.FolderGrant
+import com.example.core.database.OperationItemEntity
 import com.example.core.storage.Checksums
 import com.example.core.storage.Collision
 import com.example.core.storage.DocEntry
 import com.example.core.storage.DocumentOps
+import com.example.core.storage.FileTransferWorker
 import com.example.core.storage.OpEvent
 import com.example.core.storage.SearchHit
+import com.example.core.storage.TransferQueueController
 import com.example.feature.settings.PinnedFolderShortcut
 import com.example.feature.settings.SettingsStore
 import com.example.ui.feedback.EmptyReason
@@ -53,6 +56,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.DateFormat
 import java.util.Date
+import java.util.UUID
 
 sealed interface FilesEvent {
     data class PreviewFile(val uri: Uri, val mime: String, val name: String) : FilesEvent
@@ -62,6 +66,7 @@ sealed interface FilesEvent {
     data class AskRename(val entry: FileEntry) : FilesEvent
     data class AskDelete(val entries: List<FileEntry>) : FilesEvent
     data class AskZip(val entries: List<FileEntry>) : FilesEvent
+    data class AskConflict(val conflictingNames: List<String>, val totalCount: Int, val isMove: Boolean) : FilesEvent
     data class Properties(val entry: FileEntry, val path: String, val uri: Uri? = null) : FilesEvent
     data object PickFolder : FilesEvent
     data class Message(val text: String, val undo: Boolean = false) : FilesEvent
@@ -73,7 +78,7 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
     private val ops = DocumentOps(app.contentResolver)
     private val settings = SettingsStore(app)
 
-    private data class Clip(val tree: Uri, val items: List<DocEntry>, val move: Boolean)
+    private data class Clip(val tree: Uri, val srcParentDocId: String?, val items: List<DocEntry>, val move: Boolean)
 
     private val _ui = MutableStateFlow(
         FilesUiState(places = emptyList(), selectedPlaceId = null, crumbs = emptyList(), entries = UiState.Loading)
@@ -540,12 +545,12 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
         if (selectedDocs.isEmpty()) return
         when (action) {
             "copy" -> {
-                clip = Clip(t, selectedDocs, false)
+                clip = Clip(t, stack.lastOrNull()?.first, selectedDocs, false)
                 _ui.update { it.copy(selection = emptySet(), clipboardCount = selectedDocs.size) }
                 _events.tryEmit(FilesEvent.Message("${selectedDocs.size} copied. Open a folder and tap Paste."))
             }
             "move" -> {
-                clip = Clip(t, selectedDocs, true)
+                clip = Clip(t, stack.lastOrNull()?.first, selectedDocs, true)
                 _ui.update { it.copy(selection = emptySet(), clipboardCount = selectedDocs.size) }
                 _events.tryEmit(FilesEvent.Message("${selectedDocs.size} ready to move. Open a folder and tap Paste."))
             }
@@ -631,12 +636,12 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
                 if (uris.isNotEmpty()) _events.tryEmit(FilesEvent.Share(uris))
             }
             "copy" -> {
-                clip = Clip(t, sel, false)
+                clip = Clip(t, stack.lastOrNull()?.first, sel, false)
                 publish()
                 _events.tryEmit(FilesEvent.Message("${sel.size} copied. Open a folder and tap Paste."))
             }
             "move" -> {
-                clip = Clip(t, sel, true)
+                clip = Clip(t, stack.lastOrNull()?.first, sel, true)
                 publish()
                 _events.tryEmit(FilesEvent.Message("${sel.size} ready to move. Open a folder and tap Paste."))
             }
@@ -721,29 +726,90 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
         val c = clip ?: return
         val dst = tree ?: return
         if (stack.isEmpty()) return
+        val parent = stack.last().first
+        viewModelScope.launch {
+            val conflicts = withContext(Dispatchers.IO) { ops.findConflicts(dst, parent, c.items) }
+            if (conflicts.isNotEmpty()) {
+                _events.tryEmit(FilesEvent.AskConflict(conflicts, c.items.size, c.move))
+            } else {
+                confirmPasteWithPolicy(Collision.Rename)
+            }
+        }
+    }
+
+    fun confirmPasteWithPolicy(policy: Collision) {
+        val c = clip ?: return
+        val dst = tree ?: return
+        if (stack.isEmpty()) return
+        TransferQueueController.setPaused(false)
         opJob?.cancel()
         opJob = viewModelScope.launch {
             val parent = stack.last().first
-            ops.transfer(c.tree, c.items, dst, parent, c.move, Collision.Rename).collect { ev ->
+            val opId = UUID.randomUUID().toString()
+            val now = System.currentTimeMillis()
+            val queued = c.items.map { item ->
+                OperationItemEntity(
+                    operationId = opId,
+                    sourceUri = ops.docUri(c.tree, item.docId).toString(),
+                    status = FileTransferWorker.STATUS_PENDING,
+                    updatedAt = now,
+                )
+            }
+            withContext(Dispatchers.IO) { db.operationItems().upsertAll(queued) }
+            val savedRows = withContext(Dispatchers.IO) { db.operationItems().forOperation(opId) }
+            val rowBySource = savedRows.associateBy { it.sourceUri }
+
+            ops.transfer(
+                srcTree = c.tree,
+                items = c.items,
+                dstTree = dst,
+                dstParentDocId = parent,
+                move = c.move,
+                policy = policy,
+                srcParentDocId = c.srcParentDocId,
+                paused = TransferQueueController.paused,
+                onItemResult = { entry, ok, destStr, errCode ->
+                    val srcUri = ops.docUri(c.tree, entry.docId).toString()
+                    val rowId = rowBySource[srcUri]?.id
+                    if (rowId != null) {
+                        viewModelScope.launch(Dispatchers.IO) {
+                            db.operationItems().updateStatus(
+                                id = rowId,
+                                status = if (ok) FileTransferWorker.STATUS_DONE else FileTransferWorker.STATUS_FAILED,
+                                destUri = destStr,
+                                errorCode = errCode,
+                                now = System.currentTimeMillis(),
+                            )
+                        }
+                    }
+                },
+            ).collect { ev ->
                 when (ev) {
                     is OpEvent.Progress -> _operation.value = OperationUi(
-                        if (c.move) "Moving" else "Copying",
-                        ev.current,
-                        ev.done,
-                        ev.total,
-                        canPause = false,
+                        title = if (c.move) "Moving" else "Copying",
+                        currentItem = ev.current,
+                        done = ev.done,
+                        total = ev.total,
+                        canPause = true,
+                        paused = TransferQueueController.paused.value,
                     )
                     is OpEvent.Finished -> {
+                        TransferQueueController.setPaused(false)
                         _operation.value = null
-                        if (c.move) clip = null
+                        if (c.move && ev.failed.isEmpty()) clip = null
                         _events.tryEmit(
                             FilesEvent.Message(
-                                "${ev.done} done" + if (ev.failed.isNotEmpty()) ", ${ev.failed.size} failed (originals kept)" else ""
+                                buildString {
+                                    append("${ev.done} done")
+                                    if (ev.skipped.isNotEmpty()) append(", ${ev.skipped.size} skipped")
+                                    if (ev.failed.isNotEmpty()) append(", ${ev.failed.size} failed (originals kept)")
+                                }
                             )
                         )
                         load()
                     }
                     is OpEvent.Aborted -> {
+                        TransferQueueController.setPaused(false)
                         _operation.value = null
                         LocalDiagnostics.recordEvent(ctx, ev.error.code, "files_transfer", ev.error.resolveTitle(ctx))
                         _events.tryEmit(FilesEvent.Message(ev.error.resolveSummary(ctx)))
@@ -754,7 +820,14 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
         }
     }
 
+    fun togglePauseOperation() {
+        val next = !TransferQueueController.paused.value
+        TransferQueueController.setPaused(next)
+        _operation.update { it?.copy(paused = next) }
+    }
+
     fun cancelOperation() {
+        TransferQueueController.setPaused(false)
         opJob?.cancel()
         _operation.value = null
         load()

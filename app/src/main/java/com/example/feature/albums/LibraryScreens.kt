@@ -52,6 +52,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FolderOff
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhotoAlbum
 import androidx.compose.material.icons.filled.PhotoCamera
@@ -173,6 +174,7 @@ enum class SystemCollection(val labelRes: Int, val icon: ImageVector) {
     Duplicates(R.string.collection_duplicates, Icons.Filled.ContentCopy),
     RecentlyDeleted(R.string.collection_trash, Icons.Filled.DeleteOutline),
     ExcludedFolders(R.string.collection_excluded, Icons.Filled.FolderOff),
+    Vault(R.string.collection_vault, Icons.Filled.Lock),
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -192,6 +194,7 @@ fun AlbumsScreen(
     onPickCover: (AlbumUi) -> Unit,
     onDeleteAlbum: (AlbumUi) -> Unit,
     modifier: Modifier = Modifier,
+    subNav: (@Composable () -> Unit)? = null,
 ) {
     var creating by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf<AlbumUi?>(null) }
@@ -445,6 +448,8 @@ fun AlbumsScreen(
                     }
                 }
 
+                subNav?.invoke()
+
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(AlbumFilter.entries, key = { it.name }) { f ->
                         FarFilterPill(
@@ -633,6 +638,7 @@ fun SearchScreen(
     onSaveSearch: ((String) -> Unit)? = null,
     onApplySavedSearch: ((SavedSearch) -> Unit)? = null,
     onDeleteSavedSearch: ((Long) -> Unit)? = null,
+    subNav: (@Composable () -> Unit)? = null,
 ) {
     val hasActiveFilter = query.isNotBlank() ||
         scope != SearchScope.All ||
@@ -911,6 +917,7 @@ fun SearchScreen(
                         }
                     }
                 }
+                subNav?.invoke()
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -1031,6 +1038,29 @@ fun SearchScreen(
                                 )
                             }
                         }
+                    }
+                }
+                val parsed = remember(query) { SearchQueryParser.parse(query) }
+                if (parsed.hasStructuredFilters) {
+                    val parts = buildList {
+                        parsed.inferredScope?.let { add(it.label) }
+                        parsed.inferredDateRange?.let { add(it.label) }
+                        parsed.yearFilter?.let { add(it.toString()) }
+                        parsed.inferredSizeFilter?.let { add(it.label) }
+                        parsed.tags.forEach { add("#$it") }
+                        if (parsed.effectiveTextQuery.isNotBlank()) add("“${parsed.effectiveTextQuery}”")
+                    }
+                    if (parts.isNotEmpty()) {
+                        Text(
+                            text = stringResource(R.string.search_parsed_summary, parts.joinToString(" · ")),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .padding(horizontal = 4.dp)
+                                .testTag("search_parsed_summary"),
+                        )
                     }
                 }
             }

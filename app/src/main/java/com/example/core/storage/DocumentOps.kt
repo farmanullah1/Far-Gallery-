@@ -9,8 +9,10 @@ import com.example.core.common.FarResult
 import com.example.core.common.farCatching
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import java.io.InputStream
@@ -166,10 +168,17 @@ class DocumentOps(private val r: ContentResolver) {
         DocumentsContract.getDocumentId(u)
     }
 
-    fun rename(tree: Uri, docId: String, newName: String): FarResult<Unit> = farCatching {
-        DocumentsContract.renameDocument(r, docUri(tree, docId), newName)
-            ?: throw java.io.IOException("rename refused")
-        Unit
+    fun rename(tree: Uri, docId: String, newName: String): FarResult<Unit> {
+        val target = docUri(tree, docId)
+        val info = inspectDoc(target)
+        if (info != null && !info.canRename) {
+            return FarResult.Err(FarError.Unsupported("provider does not support rename"))
+        }
+        return farCatching {
+            DocumentsContract.renameDocument(r, target, newName)
+                ?: throw java.io.IOException("rename refused")
+            Unit
+        }
     }
 
     fun delete(tree: Uri, docId: String): FarResult<Unit> = farCatching {
@@ -187,9 +196,16 @@ class DocumentOps(private val r: ContentResolver) {
         return "$base ($i)$ext"
     }
 
+    /** Returns the list of item names that already exist in [dstParentDocId]. */
+    fun findConflicts(dstTree: Uri, dstParentDocId: String, items: List<DocEntry>): List<String> {
+        val existing = (list(dstTree, dstParentDocId) as? FarResult.Ok)?.value?.map { it.name }?.toSet() ?: return emptyList()
+        return items.map { it.name }.filter { it in existing }.distinct()
+    }
+
     /**
-     * Copy or move [items] into destParent: never overwrite silently, verify size before success,
-     * delete the source only after the copy is verified, stop cleanly on cancel, keep going after a single-item failure.
+     * Copy or move [items] into destParent: never overwrite silently unless policy == Replace, verify size before success,
+     * try DocumentsContract.moveDocument fast-path on same-tree moves, fall back to verified copy-delete across volumes,
+     * honor [paused] between and inside transfers, and stop cleanly on cancel.
      */
     fun transfer(
         srcTree: Uri,
@@ -198,6 +214,9 @@ class DocumentOps(private val r: ContentResolver) {
         dstParentDocId: String,
         move: Boolean,
         policy: Collision,
+        srcParentDocId: String? = null,
+        paused: StateFlow<Boolean>? = null,
+        onItemResult: (item: DocEntry, ok: Boolean, destUri: String?, errorCode: String?) -> Unit = { _, _, _, _ -> },
     ): Flow<OpEvent> = flow {
         val skipped = ArrayList<String>()
         val failed = ArrayList<Pair<String, FarError>>()
@@ -205,12 +224,17 @@ class DocumentOps(private val r: ContentResolver) {
         val existing = (list(dstTree, dstParentDocId) as? FarResult.Ok)?.value?.map { it.name }?.toMutableSet()
             ?: run { emit(OpEvent.Aborted(FarError.ProviderUnavailable())); return@flow }
 
-        items.forEachIndexed { index, item ->
+        for ((index, item) in items.withIndex()) {
             currentCoroutineContext().ensureActive()
+            while (paused?.value == true) {
+                currentCoroutineContext().ensureActive()
+                delay(120)
+            }
             emit(OpEvent.Progress(index, items.size, item.name))
             if (item.name in existing && policy == Collision.Skip) {
                 skipped += item.name
-                return@forEachIndexed
+                onItemResult(item, true, null, null)
+                continue
             }
             var targetName = item.name
             if (item.name in existing) {
@@ -222,16 +246,47 @@ class DocumentOps(private val r: ContentResolver) {
                         ?.let { delete(dstTree, it.docId) }
                 }
             }
-            val res = if (item.isDir) copyDir(srcTree, item, dstTree, dstParentDocId, targetName)
-            else copyFile(srcTree, item, dstTree, dstParentDocId, targetName)
+
+            // Fast-path native SAF move within the same document tree when no rename is needed
+            if (move && srcTree == dstTree && srcParentDocId != null && item.canMove && targetName == item.name) {
+                val movedUri = runCatching {
+                    DocumentsContract.moveDocument(
+                        r,
+                        docUri(srcTree, item.docId),
+                        docUri(srcTree, srcParentDocId),
+                        docUri(dstTree, dstParentDocId),
+                    )
+                }.getOrNull()
+                if (movedUri != null) {
+                    existing += targetName
+                    done++
+                    onItemResult(item, true, movedUri.toString(), null)
+                    continue
+                }
+            }
+
+            val res = if (item.isDir) copyDir(srcTree, item, dstTree, dstParentDocId, targetName, paused = paused)
+            else copyFile(srcTree, item, dstTree, dstParentDocId, targetName, paused)
             when (res) {
                 is FarResult.Ok -> {
                     existing += targetName
                     done++
-                    if (move) delete(srcTree, item.docId).let { if (it is FarResult.Err) failed += item.name to it.error }
+                    val destStr = res.value
+                    if (move) {
+                        val delRes = delete(srcTree, item.docId)
+                        if (delRes is FarResult.Err) {
+                            failed += item.name to delRes.error
+                            onItemResult(item, false, destStr, delRes.error.code)
+                        } else {
+                            onItemResult(item, true, destStr, null)
+                        }
+                    } else {
+                        onItemResult(item, true, destStr, null)
+                    }
                 }
                 is FarResult.Err -> {
                     failed += item.name to res.error
+                    onItemResult(item, false, null, res.error.code)
                     if (res.error is FarError.StorageFull || res.error is FarError.VolumeRemoved) {
                         emit(OpEvent.Aborted(res.error))
                         return@flow
@@ -242,36 +297,69 @@ class DocumentOps(private val r: ContentResolver) {
         emit(OpEvent.Finished(done, skipped, failed))
     }.flowOn(Dispatchers.IO)
 
-    private fun copyFile(srcTree: Uri, f: DocEntry, dstTree: Uri, parent: String, name: String): FarResult<Unit> {
+    private suspend fun copyFile(
+        srcTree: Uri,
+        f: DocEntry,
+        dstTree: Uri,
+        parent: String,
+        name: String,
+        paused: StateFlow<Boolean>? = null,
+    ): FarResult<String> {
         val created = create(dstTree, parent, f.mime.ifEmpty { "application/octet-stream" }, name)
         val newId = (created as? FarResult.Ok)?.value ?: return (created as FarResult.Err)
+        val dstDocUri = docUri(dstTree, newId)
         val res = farCatching {
+            var totalWritten = 0L
             val input = r.openInputStream(docUri(srcTree, f.docId)) ?: throw java.io.IOException("openInputStream returned null")
             input.use { i ->
-                val output = r.openOutputStream(docUri(dstTree, newId)) ?: throw java.io.IOException("openOutputStream returned null")
-                output.use { o -> i.copyTo(o) }
+                val output = r.openOutputStream(dstDocUri) ?: throw java.io.IOException("openOutputStream returned null")
+                output.use { o ->
+                    val buf = ByteArray(64 * 1024)
+                    while (true) {
+                        currentCoroutineContext().ensureActive()
+                        while (paused?.value == true) {
+                            currentCoroutineContext().ensureActive()
+                            delay(120)
+                        }
+                        val n = i.read(buf)
+                        if (n < 0) break
+                        o.write(buf, 0, n)
+                        totalWritten += n
+                    }
+                    o.flush()
+                }
             }
-            val got = r.query(docUri(dstTree, newId), arrayOf(Document.COLUMN_SIZE), null, null, null)?.use {
-                if (it.moveToFirst()) it.getLong(0) else -1L
+            val got = r.query(dstDocUri, arrayOf(Document.COLUMN_SIZE), null, null, null)?.use {
+                if (it.moveToFirst() && !it.isNull(0)) it.getLong(0) else -1L
             } ?: -1L
             if (f.size != null && got >= 0 && got != f.size) throw java.io.IOException("size mismatch")
+            if (f.size != null && f.size > 0 && totalWritten != f.size) throw java.io.IOException("short copy")
+            dstDocUri.toString()
         }
         if (res is FarResult.Err) delete(dstTree, newId)
         return res
     }
 
-    private fun copyDir(srcTree: Uri, d: DocEntry, dstTree: Uri, parent: String, name: String, depth: Int = 0): FarResult<Unit> {
+    private suspend fun copyDir(
+        srcTree: Uri,
+        d: DocEntry,
+        dstTree: Uri,
+        parent: String,
+        name: String,
+        depth: Int = 0,
+        paused: StateFlow<Boolean>? = null,
+    ): FarResult<String> {
         if (depth > 32) return FarResult.Err(FarError.InvalidInput("folder too deep"))
         val newDir = (create(dstTree, parent, Document.MIME_TYPE_DIR, name) as? FarResult.Ok)?.value
             ?: return FarResult.Err(FarError.Io())
         val kids = (list(srcTree, d.docId) as? FarResult.Ok)?.value
             ?: return FarResult.Err(FarError.ProviderUnavailable())
         for (k in kids) {
-            val r = if (k.isDir) copyDir(srcTree, k, dstTree, newDir, k.name, depth + 1)
-            else copyFile(srcTree, k, dstTree, newDir, k.name)
+            val r = if (k.isDir) copyDir(srcTree, k, dstTree, newDir, k.name, depth + 1, paused)
+            else copyFile(srcTree, k, dstTree, newDir, k.name, paused)
             if (r is FarResult.Err) return r
         }
-        return FarResult.Ok(Unit)
+        return FarResult.Ok(docUri(dstTree, newDir).toString())
     }
 
     /** Extract a ZIP file into a newly created subfolder in [dstParentDocId] with SafeZip protection. */
@@ -393,6 +481,21 @@ object Checksums {
             md.update(buf, 0, n)
         }
         return md.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    /**
+     * Compares [actualHex] with [expectedInput], normalizing whitespace, case, and optional "sha256:" prefix.
+     * Returns null when [expectedInput] is blank.
+     */
+    fun matchesSha256(actualHex: String, expectedInput: String): Boolean? {
+        val normalizedExpected = expectedInput.trim()
+            .removePrefix("sha256:")
+            .removePrefix("SHA256:")
+            .replace(" ", "")
+            .replace(":", "")
+            .lowercase()
+        if (normalizedExpected.isEmpty()) return null
+        return actualHex.trim().lowercase() == normalizedExpected
     }
 }
 

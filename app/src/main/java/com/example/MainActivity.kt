@@ -7,6 +7,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.StrictMode
+import android.view.KeyEvent
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
@@ -52,8 +54,27 @@ class FarApplication : Application(), ImageLoaderFactory {
 
     override fun onCreate() {
         super.onCreate()
+        if (BuildConfig.DEBUG) {
+            StrictMode.setThreadPolicy(
+                StrictMode.ThreadPolicy.Builder()
+                    .detectNetwork()
+                    .penaltyLog()
+                    .build()
+            )
+            StrictMode.setVmPolicy(
+                StrictMode.VmPolicy.Builder()
+                    .detectLeakedClosableObjects()
+                    .detectLeakedSqlLiteObjects()
+                    .penaltyLog()
+                    .build()
+            )
+        }
         installCrashNote()
         appScope.launch {
+            runCatching {
+                cacheDir.listFiles { f -> f.isFile && f.name.startsWith("trim_") && f.name.endsWith(".mp4") }
+                    ?.forEach { it.delete() }
+            }
             try {
                 FarDatabase.get(this@FarApplication).operations().markInterrupted(System.currentTimeMillis())
             } catch (e: CancellationException) {
@@ -180,6 +201,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    @Volatile
+    var volumeShutterHandler: (() -> Unit)? = null
+
     fun consumeRoute() {
         _route.value = IncomingRoute.None
         _incoming.value = null
@@ -214,5 +238,15 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         vm.refreshAccess()
         vm.markHealthyStart()
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        val handler = vm.volumeShutterHandler
+        val volEnabled = vm.settings.value?.volumeKeyShutter ?: true
+        if (volEnabled && handler != null && (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) && event?.repeatCount == 0) {
+            handler.invoke()
+            return true
+        }
+        return super.onKeyDown(keyCode, event)
     }
 }

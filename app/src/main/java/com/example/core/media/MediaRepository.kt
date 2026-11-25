@@ -29,15 +29,20 @@ import com.example.core.database.AlbumMediaRef
 import com.example.core.database.ExcludedFolder
 import com.example.core.database.FarDatabase
 import com.example.core.database.FavoriteEntity
+import com.example.core.database.FolderRuleEntity
 import com.example.core.database.MediaTagRef
+import com.example.core.database.QuarantineItemEntity
 import com.example.core.database.RecentView
 import com.example.core.database.SavedSearch
+import com.example.core.database.ScanCheckpointEntity
 import com.example.core.database.SearchHistory
 import com.example.core.database.TagEntity
 import com.example.feature.gallery.GalleryItem
 import com.example.feature.gallery.LibraryZoom
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -63,6 +68,7 @@ data class MediaFilter(
     val kind: MediaKind = MediaKind.All,
     val nameQuery: String? = null,
     val pathContains: String? = null,
+    val pathOrIds: Set<Long>? = null,
     val excludedPaths: List<String> = emptyList(),
     val minSizeBytes: Long? = null,
     val minDateMs: Long? = null,
@@ -86,6 +92,12 @@ data class MediaRow(
     val relativePath: String?,
 )
 
+data class MediaLibraryStats(
+    val photoCount: Int,
+    val videoCount: Int,
+    val totalBytes: Long,
+)
+
 class MediaRepository(private val resolver: ContentResolver) {
 
     private val filesUri: Uri = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
@@ -99,9 +111,32 @@ class MediaRepository(private val resolver: ContentResolver) {
         filter: MediaFilter = MediaFilter(),
         sort: SortKey = SortKey.Taken,
         descending: Boolean = true,
-        limit: Int = 2000,
+        limit: Int? = null,
     ): FarResult<List<MediaRow>> = withContext(Dispatchers.IO) {
-        farCatching { queryMediaStore(resolver, filesUri, filter, sort, descending, offset = 0, limit = limit) }
+        farCatching {
+            val out = ArrayList<MediaRow>()
+            val seen = HashSet<Long>()
+            val chunkSize = 1000
+            var offset = 0
+            while (true) {
+                currentCoroutineContext().ensureActive()
+                val remaining = limit?.let { (it - out.size).coerceAtMost(chunkSize) } ?: chunkSize
+                if (remaining <= 0) break
+                val batch = queryMediaStore(resolver, filesUri, filter, sort, descending, offset = offset, limit = remaining)
+                batch.forEach { row ->
+                    if (seen.add(row.id)) out += row
+                }
+                if (batch.size < remaining) break
+                offset += batch.size
+            }
+            out
+        }
+    }
+
+    suspend fun computeStats(filter: MediaFilter = MediaFilter()): FarResult<MediaLibraryStats> = withContext(Dispatchers.IO) {
+        farCatching {
+            computeMediaStats(resolver, filesUri, filter)
+        }
     }
 
     /** Real consent flows. Never bypassed: IntentSender is launched with StartIntentSenderForResult. */
@@ -168,9 +203,18 @@ internal fun queryMediaStore(
         sel.append(" AND ${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ?")
         args += "%${it.trim()}%"
     }
-    filter.pathContains?.let {
-        sel.append(" AND ${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?")
-        args += "%$it%"
+    filter.pathContains?.let { path ->
+        val extra = filter.pathOrIds.orEmpty()
+        if (extra.isEmpty()) {
+            sel.append(" AND ${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?")
+            args += "%$path%"
+        } else {
+            val idClauses = extra.chunked(400).joinToString(" OR ") { chunk ->
+                "${MediaStore.MediaColumns._ID} IN (${chunk.joinToString(",")})"
+            }
+            sel.append(" AND (${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? OR $idClauses)")
+            args += "%$path%"
+        }
     }
     filter.excludedPaths.forEach {
         sel.append(" AND (${MediaStore.MediaColumns.RELATIVE_PATH} IS NULL OR ${MediaStore.MediaColumns.RELATIVE_PATH} NOT LIKE ?)")
@@ -271,6 +315,60 @@ internal fun queryMediaStore(
     return out
 }
 
+internal suspend fun computeMediaStats(
+    resolver: ContentResolver,
+    base: Uri,
+    filter: MediaFilter,
+    chunkSize: Int = 2000,
+): MediaLibraryStats {
+    if (filter.forceEmpty) return MediaLibraryStats(0, 0, 0L)
+    val sel = StringBuilder("(${MediaStore.Files.FileColumns.MEDIA_TYPE} IN (?,?))")
+    val args = ArrayList<String>()
+    args += when (filter.kind) {
+        MediaKind.Videos -> listOf("3", "3")
+        MediaKind.Photos -> listOf("1", "1")
+        MediaKind.All -> listOf("1", "3")
+    }
+    filter.excludedPaths.forEach {
+        sel.append(" AND (${MediaStore.MediaColumns.RELATIVE_PATH} IS NULL OR ${MediaStore.MediaColumns.RELATIVE_PATH} NOT LIKE ?)")
+        args += "$it%"
+    }
+    val projection = arrayOf(
+        MediaStore.Files.FileColumns.MEDIA_TYPE,
+        MediaStore.MediaColumns.SIZE,
+    )
+    var photos = 0
+    var videos = 0
+    var bytes = 0L
+    var offset = 0
+    while (true) {
+        currentCoroutineContext().ensureActive()
+        val bundle = Bundle().apply {
+            putString(ContentResolver.QUERY_ARG_SQL_SELECTION, sel.toString())
+            putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, args.toTypedArray())
+            putStringArray(ContentResolver.QUERY_ARG_SORT_COLUMNS, arrayOf(MediaStore.MediaColumns._ID))
+            putInt(ContentResolver.QUERY_ARG_SORT_DIRECTION, ContentResolver.QUERY_SORT_DIRECTION_DESCENDING)
+            putInt(ContentResolver.QUERY_ARG_LIMIT, chunkSize)
+            putInt(ContentResolver.QUERY_ARG_OFFSET, offset)
+            putInt(MediaStore.QUERY_ARG_MATCH_TRASHED, if (filter.trashedOnly) MediaStore.MATCH_ONLY else MediaStore.MATCH_EXCLUDE)
+        }
+        var count = 0
+        resolver.query(base, projection, bundle, null)?.use { c ->
+            val iType = c.getColumnIndex(MediaStore.Files.FileColumns.MEDIA_TYPE)
+            val iSize = c.getColumnIndex(MediaStore.MediaColumns.SIZE)
+            if (iType < 0) return MediaLibraryStats(photos, videos, bytes)
+            while (c.moveToNext()) {
+                count++
+                if (c.getInt(iType) == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO) videos++ else photos++
+                if (iSize >= 0 && !c.isNull(iSize)) bytes += c.getLong(iSize).coerceAtLeast(0L)
+            }
+        }
+        if (count < chunkSize) break
+        offset += count
+    }
+    return MediaLibraryStats(photos, videos, bytes)
+}
+
 private class MediaPagingSource(
     private val resolver: ContentResolver,
     private val base: Uri,
@@ -323,8 +421,15 @@ class GalleryViewModel(
         .map { it.toSet() }
         .catch { emit(emptySet()) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
-    val excludedFolders: StateFlow<List<String>> = db.folders().excluded()
-        .map { list -> list.map { it.relativePath } }
+    val folderRules: StateFlow<List<FolderRuleEntity>> = db.folderRules().all()
+        .catch { emit(emptyList()) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val quarantineItems: StateFlow<List<QuarantineItemEntity>> = db.quarantine().all()
+        .catch { emit(emptyList()) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val excludedFolders: StateFlow<List<String>> = combine(db.folders().excluded(), db.folderRules().all()) { ex, rules ->
+        (ex.map { it.relativePath } + rules.filter { it.excludedFromTimeline || it.hidden }.map { it.relativePath }).distinct()
+    }
         .catch { emit(emptyList()) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val albums: StateFlow<List<AlbumEntity>> = db.albums().albums()
@@ -349,6 +454,10 @@ class GalleryViewModel(
     val recentViewIds: StateFlow<List<Long>> = db.history().recentViews()
         .catch { emit(emptyList()) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val farCapturedIds: StateFlow<Set<Long>> = db.mediaAssets().capturedByFar()
+        .map { list -> list.map { it.mediaStoreId }.toSet() }
+        .catch { emit(emptySet()) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
 
     val libraryRows: StateFlow<List<MediaRow>> =
         combine(excludedFolders, refreshNonce) { ex, _ -> ex }
@@ -471,6 +580,36 @@ class GalleryViewModel(
 
     fun deleteSavedSearch(id: Long) = viewModelScope.launch {
         db.savedSearches().delete(id)
+    }
+
+    fun updateFolderRule(
+        relativePath: String,
+        hidden: Boolean,
+        excludedFromTimeline: Boolean,
+        excludedFromOcr: Boolean,
+    ) = viewModelScope.launch {
+        val clean = relativePath.trim()
+        if (clean.isEmpty()) return@launch
+        db.folderRules().upsert(
+            FolderRuleEntity(
+                relativePath = clean,
+                hidden = hidden,
+                excludedFromTimeline = excludedFromTimeline,
+                excludedFromOcr = excludedFromOcr,
+                updatedAt = System.currentTimeMillis(),
+            )
+        )
+        if (excludedFromTimeline || hidden) db.folders().exclude(ExcludedFolder(clean))
+        else db.folders().include(clean)
+        refreshNonce.value++
+    }
+
+    fun dismissQuarantine(uri: String) = viewModelScope.launch {
+        db.quarantine().remove(uri)
+    }
+
+    fun clearQuarantine() = viewModelScope.launch {
+        db.quarantine().clearAll()
     }
 
     companion object {

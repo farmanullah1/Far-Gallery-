@@ -6,9 +6,11 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
+import androidx.core.content.IntentCompat
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.IOException
+import java.util.concurrent.TimeoutException
 import kotlin.coroutines.cancellation.CancellationException
 
 /** ---------- Typed errors ---------- */
@@ -24,6 +26,10 @@ sealed interface FarError {
     data class OutOfMemory(override val code: String = "FG-OOM") : FarError
     data class Io(override val code: String = "FG-IO") : FarError
     data class InvalidInput(val reason: String, override val code: String = "FG-INP") : FarError
+    data class Cancelled(override val code: String = "FG-CNC") : FarError
+    data class Timeout(override val code: String = "FG-TMO") : FarError
+    data class Hardware(val detail: String = "", override val code: String = "FG-HW") : FarError
+    data class Model(val detail: String = "", override val code: String = "FG-MDL") : FarError
     data class Unknown(override val code: String = "FG-UNK") : FarError
 }
 
@@ -35,6 +41,7 @@ sealed interface FarResult<out T> {
 /**
  * Wrap any I/O or decode call at the repository boundary.
  * - CancellationException is ALWAYS rethrown (never swallowed).
+ * - TimeoutException maps to FarError.Timeout cleanly.
  * - OutOfMemoryError is mapped only here (around bitmap/decoder work); caller should downsample + trim caches.
  * - Anything unexpected becomes Unknown so the UI shows a safe card instead of crashing.
  */
@@ -42,6 +49,8 @@ inline fun <T> farCatching(block: () -> T): FarResult<T> = try {
     FarResult.Ok(block())
 } catch (e: CancellationException) {
     throw e
+} catch (_: TimeoutException) {
+    FarResult.Err(FarError.Timeout())
 } catch (_: FileNotFoundException) {
     FarResult.Err(FarError.Missing())
 } catch (_: SecurityException) {
@@ -124,6 +133,10 @@ fun FarError.userTitle(): String = when (this) {
     is FarError.OutOfMemory -> "Image too large to process"
     is FarError.Io -> "File read/write failed"
     is FarError.InvalidInput -> "Invalid operation"
+    is FarError.Cancelled -> "Operation cancelled"
+    is FarError.Timeout -> "Operation timed out"
+    is FarError.Hardware -> "Camera or hardware unavailable"
+    is FarError.Model -> "On-device model unavailable"
     is FarError.Unknown -> "Unexpected problem"
 }
 
@@ -138,6 +151,10 @@ fun FarError.userSummary(): String = when (this) {
     is FarError.OutOfMemory -> "Try processing a smaller batch or lower resolution."
     is FarError.Io -> "An I/O error prevented completion. Original files are safe."
     is FarError.InvalidInput -> "Check your input and try again ($reason)."
+    is FarError.Cancelled -> "The task was stopped before finishing. Originals are untouched."
+    is FarError.Timeout -> "The operation took too long to finish. Try again on a smaller batch."
+    is FarError.Hardware -> if (detail.isBlank()) "The device hardware isn't ready right now." else "The device hardware isn't ready ($detail)."
+    is FarError.Model -> if (detail.isBlank()) "The offline recognition model isn't ready yet." else "The offline recognition model isn't ready ($detail)."
     is FarError.Unknown -> "Something went wrong, but your original files were not modified."
 }
 
@@ -152,6 +169,10 @@ fun FarError.resolveTitle(ctx: Context): String = when (this) {
     is FarError.OutOfMemory -> ctx.getString(com.example.R.string.err_oom_title)
     is FarError.Io -> ctx.getString(com.example.R.string.err_io_title)
     is FarError.InvalidInput -> ctx.getString(com.example.R.string.err_invalid_title)
+    is FarError.Cancelled -> ctx.getString(com.example.R.string.err_cancelled_title)
+    is FarError.Timeout -> ctx.getString(com.example.R.string.err_timeout_title)
+    is FarError.Hardware -> ctx.getString(com.example.R.string.err_hardware_title)
+    is FarError.Model -> ctx.getString(com.example.R.string.err_model_title)
     is FarError.Unknown -> ctx.getString(com.example.R.string.err_unknown_title)
 }
 
@@ -166,6 +187,10 @@ fun FarError.resolveSummary(ctx: Context): String = when (this) {
     is FarError.OutOfMemory -> ctx.getString(com.example.R.string.err_oom_summary)
     is FarError.Io -> ctx.getString(com.example.R.string.err_io_summary)
     is FarError.InvalidInput -> ctx.getString(com.example.R.string.err_invalid_summary, reason)
+    is FarError.Cancelled -> ctx.getString(com.example.R.string.err_cancelled_summary)
+    is FarError.Timeout -> ctx.getString(com.example.R.string.err_timeout_summary)
+    is FarError.Hardware -> ctx.getString(com.example.R.string.err_hardware_summary)
+    is FarError.Model -> ctx.getString(com.example.R.string.err_model_summary)
     is FarError.Unknown -> ctx.getString(com.example.R.string.err_unknown_summary)
 }
 
@@ -198,10 +223,9 @@ class IncomingMediaResolver(private val resolver: ContentResolver, private val m
         }
         val uris = LinkedHashSet<Uri>()
         intent.data?.let(uris::add)
-        @Suppress("DEPRECATION")
         when (intent.action) {
-            Intent.ACTION_SEND -> intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)?.let(uris::add)
-            Intent.ACTION_SEND_MULTIPLE -> intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)?.let(uris::addAll)
+            Intent.ACTION_SEND -> IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)?.let(uris::add)
+            Intent.ACTION_SEND_MULTIPLE -> IntentCompat.getParcelableArrayListExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)?.let(uris::addAll)
         }
         intent.clipData?.let { clip: ClipData ->
             for (i in 0 until clip.itemCount) clip.getItemAt(i).uri?.let(uris::add)
@@ -220,16 +244,28 @@ class IncomingMediaResolver(private val resolver: ContentResolver, private val m
     }
 
     private fun inspect(uri: Uri): IncomingItem {
-        if (uri.scheme != ContentResolver.SCHEME_CONTENT) throw IllegalArgumentException("scheme")
+        val scheme = uri.scheme
         var name: String? = null
         var size: Long? = null
-        resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { c ->
-            if (c.moveToFirst()) {
-                c.getColumnIndex(OpenableColumns.DISPLAY_NAME).takeIf { it >= 0 }?.let { name = c.getString(it) }
-                c.getColumnIndex(OpenableColumns.SIZE).takeIf { it >= 0 && !c.isNull(it) }?.let { size = c.getLong(it) }
+        when (scheme) {
+            ContentResolver.SCHEME_CONTENT -> {
+                resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { c ->
+                    if (c.moveToFirst()) {
+                        c.getColumnIndex(OpenableColumns.DISPLAY_NAME).takeIf { it >= 0 }?.let { name = c.getString(it) }
+                        c.getColumnIndex(OpenableColumns.SIZE).takeIf { it >= 0 && !c.isNull(it) }?.let { size = c.getLong(it) }
+                    }
+                }
             }
+            ContentResolver.SCHEME_FILE -> {
+                val file = uri.path?.let(::File)?.canonicalFile
+                    ?.takeIf { it.isFile && it.canRead() }
+                    ?: throw FileNotFoundException("unreadable file uri")
+                name = file.name
+                size = file.length()
+            }
+            else -> throw IllegalArgumentException("unsupported uri scheme")
         }
-        val declared = resolver.getType(uri)
+        val declared = if (scheme == ContentResolver.SCHEME_CONTENT) resolver.getType(uri) else null
         val header = ByteArray(32)
         val read = resolver.openInputStream(uri)?.use { it.read(header) } ?: throw FileNotFoundException()
         val sniffed = sniffMime(header, read)

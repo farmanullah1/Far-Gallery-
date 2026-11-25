@@ -55,6 +55,7 @@ import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.Timer
@@ -112,12 +113,10 @@ import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 enum class CameraMode(val label: String, val labelRes: Int) {
-    SloMo("SLO-MO", R.string.camera_mode_video),
     Video("VIDEO", R.string.camera_mode_video),
     Photo("PHOTO", R.string.camera_mode_photo),
     Square("SQUARE", R.string.camera_mode_square),
     Scan("SCAN", R.string.camera_mode_scan),
-    Portrait("PORTRAIT", R.string.camera_mode_photo),
 }
 
 enum class FlashMode { Off, Auto, On }
@@ -183,9 +182,22 @@ fun CameraScreen(
     onFocusPoint: (MeteringPoint?, Boolean) -> Unit = { _, _ -> },
     onClearFocusLock: () -> Unit = {},
     onEditLastScan: ((String) -> Unit)? = null,
+    onExportLastScanPdf: ((String) -> Unit)? = null,
+    scanToast: String? = null,
+    onDismissScanToast: () -> Unit = {},
 ) {
     if (!state.permissionGranted) {
-        Box(modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+        Box(modifier.fillMaxSize().background(Color.Black)) {
+            CircleIcon(
+                icon = Icons.Filled.Close,
+                desc = stringResource(R.string.cd_close_camera),
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .statusBarsPadding()
+                    .padding(16.dp)
+                    .testTag("camera_close_button"),
+                onClick = onClose,
+            )
             ErrorCard(
                 ErrorInfo(
                     title = stringResource(R.string.camera_perm_title),
@@ -195,7 +207,8 @@ fun CameraScreen(
                         ErrorAction(stringResource(R.string.camera_perm_allow), true, onRequestPermission),
                         ErrorAction(stringResource(R.string.action_close), false, onClose),
                     ),
-                )
+                ),
+                modifier = Modifier.align(Alignment.Center),
             )
         }
         return
@@ -275,6 +288,7 @@ fun CameraScreen(
                     CircleIcon(
                         icon = Icons.Filled.Close,
                         desc = stringResource(R.string.cd_close_camera),
+                        modifier = Modifier.testTag("camera_close_button"),
                         onClick = onClose,
                     )
                     if (caps.hasFlash) {
@@ -324,7 +338,7 @@ fun CameraScreen(
                             fontWeight = FontWeight.Bold,
                         )
                     }
-                    (state.mode == CameraMode.Video || state.mode == CameraMode.SloMo) && !state.micPermissionGranted -> Row(
+                    state.mode == CameraMode.Video && !state.micPermissionGranted -> Row(
                         Modifier
                             .minimumInteractiveComponentSize()
                             .clip(RoundedCornerShape(16.dp))
@@ -498,25 +512,75 @@ fun CameraScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            if (state.lastCaptureWasScan && state.lastCaptureUri != null && onEditLastScan != null) {
+            scanToast?.let { msg ->
                 Row(
                     Modifier
                         .minimumInteractiveComponentSize()
                         .clip(RoundedCornerShape(18.dp))
-                        .background(FarPalette.CameraYellow.copy(alpha = 0.92f))
-                        .clickable { onEditLastScan(state.lastCaptureUri) }
-                        .padding(horizontal = 14.dp, vertical = 6.dp)
-                        .testTag("camera_edit_scan_pill"),
+                        .background(Color.Black.copy(alpha = 0.84f))
+                        .border(0.75.dp, Color.White.copy(alpha = 0.22f), RoundedCornerShape(18.dp))
+                        .clickable(onClick = onDismissScanToast)
+                        .padding(horizontal = 14.dp, vertical = 8.dp)
+                        .testTag("camera_scan_toast"),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Icon(Icons.Filled.CropFree, null, Modifier.size(16.dp), tint = Color.Black)
                     Text(
-                        stringResource(R.string.camera_scan_edit),
-                        color = Color.Black,
+                        msg,
+                        color = Color.White,
                         fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        fontWeight = FontWeight.Medium,
                     )
+                }
+            }
+            if (state.lastCaptureWasScan && state.lastCaptureUri != null && (onEditLastScan != null || onExportLastScanPdf != null)) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (onEditLastScan != null) {
+                        Row(
+                            Modifier
+                                .minimumInteractiveComponentSize()
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(FarPalette.CameraYellow.copy(alpha = 0.92f))
+                                .clickable { onEditLastScan(state.lastCaptureUri) }
+                                .padding(horizontal = 14.dp, vertical = 6.dp)
+                                .testTag("camera_edit_scan_pill"),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Icon(Icons.Filled.CropFree, null, Modifier.size(16.dp), tint = Color.Black)
+                            Text(
+                                stringResource(R.string.camera_scan_edit),
+                                color = Color.Black,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+                    if (onExportLastScanPdf != null) {
+                        Row(
+                            Modifier
+                                .minimumInteractiveComponentSize()
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(Color.Black.copy(alpha = 0.78f))
+                                .border(0.75.dp, FarPalette.CameraYellow.copy(alpha = 0.75f), RoundedCornerShape(18.dp))
+                                .clickable { onExportLastScanPdf(state.lastCaptureUri) }
+                                .padding(horizontal = 14.dp, vertical = 6.dp)
+                                .testTag("camera_scan_pdf_pill"),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Icon(Icons.Filled.PictureAsPdf, null, Modifier.size(16.dp), tint = FarPalette.CameraYellow)
+                            Text(
+                                stringResource(R.string.viewer_export_pdf),
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
                 }
             }
 
@@ -799,7 +863,7 @@ private fun ModeCarousel(modes: List<CameraMode>, current: CameraMode, onPick: (
 
 @Composable
 private fun Shutter(mode: CameraMode, recording: Boolean, onClick: () -> Unit) {
-    val isVideo = mode == CameraMode.Video || mode == CameraMode.SloMo
+    val isVideo = mode == CameraMode.Video
     var pressed by remember { mutableStateOf(false) }
     val press by animateFloatAsState(if (pressed) 0.9f else 1f, label = "press")
     val innerColor by animateColorAsState(if (isVideo) FarPalette.RecordRed else Color.White, label = "inner")

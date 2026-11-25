@@ -21,6 +21,10 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -34,12 +38,18 @@ import coil.compose.AsyncImage
 import com.example.app.IncomingRoute
 import com.example.app.IntentResults
 import com.example.app.IntentRouter
+import com.example.core.common.FarResult
+import com.example.core.common.LocalDiagnostics
 import com.example.core.common.safeParseMediaUri
+import com.example.core.common.userTitle
 import com.example.feature.camera.CameraCapabilities
 import com.example.feature.camera.CameraMode
 import com.example.feature.camera.CameraScreen
 import com.example.feature.camera.CameraViewModel
+import com.example.feature.editor.PdfExporter
 import com.example.ui.theme.FarTheme
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /** Hosts the camera for: the "Far Camera" launcher icon, other apps' capture requests, and camera shortcuts. */
 class CameraActivity : AppCompatActivity() {
@@ -95,7 +105,7 @@ class CameraActivity : AppCompatActivity() {
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean =
-        if ((keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) && event?.repeatCount == 0) {
+        if (vm.volumeKeyShutterEnabled && (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) && event?.repeatCount == 0) {
             vm.shutter()
             true
         } else {
@@ -109,10 +119,22 @@ fun CameraHost(
     onClose: () -> Unit,
     onOpenLast: (Uri) -> Unit,
     onEditLastScan: ((Uri) -> Unit)? = null,
+    onScanPdfSaved: ((Uri) -> Unit)? = null,
 ) {
     val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
     val state by vm.state.collectAsState()
     val caps by vm.caps.collectAsState()
+    var scanToast by remember { mutableStateOf<String?>(null) }
+    var exportingPdf by remember { mutableStateOf(false) }
+
+    LaunchedEffect(scanToast) {
+        if (scanToast != null) {
+            delay(3500)
+            scanToast = null
+        }
+    }
+
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { r ->
         vm.permission(
             r[Manifest.permission.CAMERA] == true ||
@@ -169,6 +191,27 @@ fun CameraHost(
         onEditLastScan = if (onEditLastScan != null) {
             { uriStr -> safeParseMediaUri(uriStr)?.let(onEditLastScan) }
         } else null,
+        onExportLastScanPdf = { uriStr ->
+            val parsed = safeParseMediaUri(uriStr)
+            if (parsed != null && !exportingPdf) {
+                exportingPdf = true
+                scope.launch {
+                    when (val res = PdfExporter.exportImageToPdf(ctx, parsed, "FarScan_${System.currentTimeMillis()}")) {
+                        is FarResult.Ok -> {
+                            scanToast = ctx.getString(R.string.viewer_pdf_saved)
+                            onScanPdfSaved?.invoke(res.value)
+                        }
+                        is FarResult.Err -> {
+                            LocalDiagnostics.recordEvent(ctx, res.error.code, "camera_pdf", res.error.userTitle())
+                            scanToast = ctx.getString(R.string.viewer_pdf_failed)
+                        }
+                    }
+                    exportingPdf = false
+                }
+            }
+        },
+        scanToast = scanToast,
+        onDismissScanToast = { scanToast = null },
         onClose = onClose,
         onRequestPermission = { launcher.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)) },
         lastThumbnail = { uri -> AsyncImage(uri, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) },

@@ -194,6 +194,7 @@ fun GalleryScreen(
     onOpenSettings: (() -> Unit)? = null,
     onClearSelection: (() -> Unit)? = null,
     onToggleGroupSelect: ((Set<Long>) -> Unit)? = null,
+    subNav: (@Composable () -> Unit)? = null,
     mediaTileModifier: @Composable (GalleryItem.Media) -> Modifier = { Modifier },
     gridState: LazyGridState = rememberLazyGridState(),
 ) {
@@ -451,6 +452,7 @@ fun GalleryScreen(
                 onRequestAccess = onRequestAccess,
                 onOpenSettings = onOpenSettings,
                 onClearSelection = onClearSelection,
+                subNav = subNav,
                 onScrollTop = { scope.launch { gridState.animateScrollToItem(0) } },
                 modifier = Modifier
                     .align(Alignment.TopCenter)
@@ -484,6 +486,7 @@ private fun LibraryTopBar(
     onRequestAccess: () -> Unit,
     onOpenSettings: (() -> Unit)?,
     onClearSelection: (() -> Unit)?,
+    subNav: (@Composable () -> Unit)?,
     onScrollTop: () -> Unit,
     modifier: Modifier,
 ) {
@@ -589,6 +592,10 @@ private fun LibraryTopBar(
                         }
                     }
                 }
+            }
+
+            if (!condensed && subNav != null) {
+                subNav()
             }
 
             // Minimal glass zoom segmented bar

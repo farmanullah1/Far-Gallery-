@@ -24,9 +24,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -62,9 +66,13 @@ import com.example.app.DefaultRole
 import com.example.app.DefaultStatus
 import com.example.app.copyPlainTextToClipboard
 import com.example.core.common.LocalDiagnostics
+import com.example.core.database.OperationRecord
+import com.example.core.database.QuarantineItemEntity
 import com.example.feature.albums.AlbumSort
 import com.example.ui.components.FarFilterPill
 import com.example.ui.components.FarTopBar
+import com.example.ui.feedback.EmptyState
+import com.example.ui.feedback.ErrorAction
 import com.example.ui.theme.FarPalette
 import com.example.ui.theme.FarSpacing
 import com.example.ui.theme.LocalSemanticColors
@@ -73,11 +81,49 @@ import com.example.ui.theme.ThemeMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
+import java.text.DateFormat
+import java.util.Date
+
+import kotlinx.coroutines.flow.first
 
 private val Context.store by preferencesDataStore(
     name = "far_settings",
     corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
 )
+
+private val Context.videoPosStore by preferencesDataStore(
+    name = "far_video_positions",
+    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
+)
+
+class VideoPositionStore(private val ctx: Context) {
+    private val key = stringPreferencesKey("positions_json")
+
+    suspend fun get(uri: String): Long? = runCatching {
+        val raw = ctx.videoPosStore.data.catch { emit(emptyPreferences()) }.first()[key] ?: return null
+        val obj = org.json.JSONObject(raw)
+        if (obj.has(uri)) obj.optLong(uri).takeIf { it > 1000L } else null
+    }.getOrNull()
+
+    suspend fun save(uri: String, positionMs: Long) {
+        if (positionMs < 1000L) return
+        runCatching {
+            ctx.videoPosStore.edit { p ->
+                val obj = p[key]?.let { runCatching { org.json.JSONObject(it) }.getOrNull() } ?: org.json.JSONObject()
+                obj.put(uri, positionMs)
+                if (obj.length() > 100) {
+                    val keys = obj.keys()
+                    if (keys.hasNext()) obj.remove(keys.next())
+                }
+                p[key] = obj.toString()
+            }
+        }
+    }
+
+    suspend fun clear() {
+        runCatching { ctx.videoPosStore.edit { it.clear() } }
+    }
+}
 
 enum class AppLanguage(val tag: String, val labelRes: Int) {
     System("", R.string.language_system),
@@ -231,6 +277,7 @@ class SettingsStore(private val ctx: Context) {
     }
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
     s: FarSettings,
@@ -244,6 +291,15 @@ fun SettingsScreen(
     onDeleteOcrIndex: () -> Unit,
     onManageAccess: () -> Unit,
     onOpenStorage: () -> Unit = {},
+    onOpenVault: () -> Unit = {},
+    onExportMetadataBackup: () -> Unit = {},
+    onImportMetadataBackup: () -> Unit = {},
+    quarantineItems: List<QuarantineItemEntity> = emptyList(),
+    onDismissQuarantine: (String) -> Unit = {},
+    onClearQuarantine: () -> Unit = {},
+    recentOperations: List<OperationRecord> = emptyList(),
+    onDismissOperation: (String) -> Unit = {},
+    onClearOperations: () -> Unit = {},
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -251,9 +307,30 @@ fun SettingsScreen(
     val semantic = LocalSemanticColors.current
     var diagRefresh by remember { mutableIntStateOf(0) }
     var diagStatus by remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+    var settingsQuery by remember { mutableStateOf("") }
     val lastCrash = remember(diagRefresh) { LocalDiagnostics.readLastCrash(ctx) }
     val diagEvents = remember(diagRefresh) { LocalDiagnostics.readEvents(ctx) }
     BackHandler(onBack = onBack)
+
+    val q = settingsQuery.trim().lowercase()
+    fun matchesSetting(vararg keywords: String): Boolean {
+        if (q.isEmpty()) return true
+        return keywords.any { it.contains(q, ignoreCase = true) }
+    }
+
+    val showRecovery = (safeMode || lastCrash != null) && matchesSetting("recovery", "safe mode", "crash")
+    val showDefaults = matchesSetting("default", "gallery", "photos", "videos", "camera", "viewer")
+    val showAppearance = matchesSetting("appearance", "theme", "dark", "light", "amoled", "contrast", "accent", "color", "colour", "material you", "motion", "transparency", "haptic")
+    val showLanguage = matchesSetting("language", "english", "urdu", "rtl", "locale")
+    val showPhotos = matchesSetting("photos", "memories", "resume", "video", "exif", "gps", "strip", "access")
+    val showCamera = matchesSetting("camera", "grid", "level", "mirror", "selfie", "volume", "shutter")
+    val showPrivacy = matchesSetting("privacy", "data", "ocr", "text", "vault", "biometric", "pin", "identity", "id", "storage", "backup", "export", "import", "cache")
+    val showActivity = matchesSetting("activity", "history", "operations", "batch", "resize", "rename", "collage", "pdf", "transfer")
+    val showDiagnostics = matchesSetting("diagnostics", "recovery", "logs", "crash", "report")
+    val showQuarantine = quarantineItems.isNotEmpty() && matchesSetting("quarantine", "unreadable", "corrupt", "skip")
+    val showAbout = matchesSetting("about", "offline", "vault", "keystore", "internet", "version")
+    val anyVisible = showRecovery || showDefaults || showAppearance || showLanguage || showPhotos ||
+        showCamera || showPrivacy || showActivity || showDiagnostics || showQuarantine || showAbout
 
     Column(
         modifier
@@ -266,13 +343,42 @@ fun SettingsScreen(
             onBack = onBack,
             backTestTag = "settings_back_button",
         )
+        OutlinedTextField(
+            value = settingsQuery,
+            onValueChange = { settingsQuery = it },
+            placeholder = { Text(stringResource(R.string.settings_search_hint)) },
+            leadingIcon = { Icon(Icons.Filled.Search, null) },
+            trailingIcon = {
+                if (settingsQuery.isNotEmpty()) {
+                    IconButton(onClick = { settingsQuery = "" }, modifier = Modifier.size(48.dp)) {
+                        Icon(Icons.Filled.Close, stringResource(R.string.files_clear_search))
+                    }
+                }
+            },
+            singleLine = true,
+            shape = RoundedCornerShape(18.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = FarSpacing.screenPadding, vertical = 6.dp)
+                .testTag("settings_search_input"),
+        )
         LazyColumn(
             modifier = Modifier.weight(1f).fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = FarSpacing.screenPadding, vertical = 12.dp),
+            contentPadding = PaddingValues(horizontal = FarSpacing.screenPadding, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+        if (!anyVisible) {
+            item {
+                EmptyState(
+                    icon = Icons.Filled.Search,
+                    title = stringResource(R.string.settings_search_empty_title),
+                    body = stringResource(R.string.settings_search_empty_body, settingsQuery.trim()),
+                    primary = ErrorAction(stringResource(R.string.files_clear_search), true) { settingsQuery = "" },
+                )
+            }
+        }
 
-        if (safeMode || lastCrash != null) {
+        if (showRecovery) {
             item {
                 Section("Recovery note") {
                     if (safeMode) {
@@ -301,6 +407,7 @@ fun SettingsScreen(
             }
         }
 
+        if (showDefaults) {
         item {
             Section(stringResource(R.string.settings_defaults)) {
                 Text(
@@ -338,7 +445,9 @@ fun SettingsScreen(
                 }
             }
         }
+        }
 
+        if (showAppearance) {
         item {
             Section(stringResource(R.string.settings_appearance)) {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -351,12 +460,12 @@ fun SettingsScreen(
                         )
                     }
                 }
-                Row(
+                Text("Accent", color = MaterialTheme.colorScheme.onSurface)
+                androidx.compose.foundation.layout.FlowRow(
                     Modifier.fillMaxWidth().padding(vertical = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    Text("Accent", Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurface)
                     FarPalette.curated.forEachIndexed { idx, col ->
                         val active = s.accentIndex == idx && !s.dynamicColor
                         Box(
@@ -386,7 +495,9 @@ fun SettingsScreen(
                 Toggle("Haptic feedback", s.haptics) { v -> onChange { it.copy(haptics = v) } }
             }
         }
+        }
 
+        if (showLanguage) {
         item {
             Section(stringResource(R.string.settings_language)) {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -406,7 +517,9 @@ fun SettingsScreen(
                 }
             }
         }
+        }
 
+        if (showPhotos) {
         item {
             Section(stringResource(R.string.settings_photos)) {
                 Toggle("Memories (On this day)", s.memoriesEnabled) { v -> onChange { it.copy(memoriesEnabled = v) } }
@@ -415,7 +528,9 @@ fun SettingsScreen(
                 TextButton(onManageAccess, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) { Text("Review photo access") }
             }
         }
+        }
 
+        if (showCamera) {
         item {
             Section(stringResource(R.string.settings_camera)) {
                 Toggle("Grid and level", s.cameraGrid) { v -> onChange { it.copy(cameraGrid = v) } }
@@ -423,7 +538,9 @@ fun SettingsScreen(
                 Toggle("Volume keys take a photo", s.volumeKeyShutter) { v -> onChange { it.copy(volumeKeyShutter = v) } }
             }
         }
+        }
 
+        if (showPrivacy) {
         item {
             Section(stringResource(R.string.settings_privacy_data)) {
                 Toggle("Find text in photos (on-device OCR)", s.ocrEnabled) { v -> onChange { it.copy(ocrEnabled = v) } }
@@ -432,12 +549,84 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                TextButton(
+                    onClick = onOpenVault,
+                    modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("settings_open_vault"),
+                ) { Text(stringResource(R.string.vault_settings_button)) }
+                Text(
+                    stringResource(R.string.vault_settings_subtitle),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 TextButton(onOpenStorage, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) { Text("Storage breakdown & large files") }
+                TextButton(
+                    onClick = onExportMetadataBackup,
+                    modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("settings_export_backup"),
+                ) { Text(stringResource(R.string.settings_backup_export)) }
+                TextButton(
+                    onClick = onImportMetadataBackup,
+                    modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("settings_import_backup"),
+                ) { Text(stringResource(R.string.settings_backup_import)) }
                 TextButton(onDeleteOcrIndex, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) { Text("Delete text index") }
                 TextButton(onClearCache, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) { Text("Clear thumbnail cache (your photos are not deleted)") }
             }
         }
+        }
 
+        if (showActivity) {
+            item {
+                Section(stringResource(R.string.settings_activity_title)) {
+                    if (recentOperations.isEmpty()) {
+                        Text(
+                            stringResource(R.string.settings_activity_empty),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        val fmt = remember { DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT) }
+                        recentOperations.take(10).forEach { op ->
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        "${op.type} · ${op.status}",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = when (op.status) {
+                                            "Completed" -> semantic.success
+                                            "Failed", "Interrupted" -> MaterialTheme.colorScheme.error
+                                            else -> MaterialTheme.colorScheme.onSurface
+                                        },
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Text(
+                                        "${op.done}/${op.total} · ${fmt.format(Date(op.updatedAt))}" +
+                                            (op.errorCode?.let { " · $it" } ?: ""),
+                                        style = MaterialTheme.typography.labelMedium.copy(fontFamily = MonoFont),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                TextButton(
+                                    onClick = { onDismissOperation(op.id) },
+                                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                                ) { Text(stringResource(R.string.action_dismiss)) }
+                            }
+                        }
+                        TextButton(
+                            onClick = onClearOperations,
+                            modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("settings_clear_activity"),
+                        ) { Text(stringResource(R.string.settings_activity_clear)) }
+                    }
+                }
+            }
+        }
+
+        if (showDiagnostics) {
         item {
             Section(stringResource(R.string.settings_diagnostics)) {
                 if (diagEvents.isEmpty() && lastCrash == null) {
@@ -481,7 +670,53 @@ fun SettingsScreen(
                 }
             }
         }
+        }
 
+        if (showQuarantine) {
+            item {
+                Section(stringResource(R.string.settings_quarantine_title, quarantineItems.size)) {
+                    Text(
+                        stringResource(R.string.settings_quarantine_body),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    quarantineItems.take(8).forEach { qItem ->
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    qItem.displayName,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    "${qItem.errorCode}: ${qItem.reason}",
+                                    style = MaterialTheme.typography.labelMedium.copy(fontFamily = MonoFont),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            TextButton(
+                                onClick = { onDismissQuarantine(qItem.sourceUri) },
+                                modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                            ) { Text(stringResource(R.string.action_dismiss)) }
+                        }
+                    }
+                    TextButton(
+                        onClick = onClearQuarantine,
+                        modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("settings_clear_quarantine"),
+                    ) { Text(stringResource(R.string.settings_quarantine_clear)) }
+                }
+            }
+        }
+
+        if (showAbout) {
         item {
             Section(stringResource(R.string.settings_about)) {
                 Text(
@@ -490,6 +725,7 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurface,
                 )
             }
+        }
         }
         }
     }

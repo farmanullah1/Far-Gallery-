@@ -8,6 +8,7 @@ import com.example.core.common.FarResult
 import com.example.core.common.farCatching
 import com.example.core.database.FarDatabase
 import com.example.core.database.OcrIndexEntity
+import com.google.mlkit.common.sdkinternal.MlKitContext
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
@@ -24,6 +25,7 @@ class OcrIndexer(private val context: Context) {
     private val db = FarDatabase.get(context)
 
     suspend fun recognizeText(bitmap: Bitmap): String = withContext(Dispatchers.Default) {
+        runCatching { MlKitContext.initializeIfNeeded(context.applicationContext) }
         val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
         try {
             val image = InputImage.fromBitmap(bitmap, 0)

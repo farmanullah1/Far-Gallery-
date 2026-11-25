@@ -80,10 +80,25 @@ object LibraryStatsBridge {
     suspend fun refreshFromSystem(ctx: Context) {
         val repo = MediaRepository(ctx.contentResolver)
         val db = FarDatabase.get(ctx)
-        val excluded = runCatching { db.folders().excluded().first().map { it.relativePath } }.getOrDefault(emptyList())
+        val excluded = runCatching {
+            val legacy = db.folders().excluded().first().map { it.relativePath }
+            val ruled = db.folderRules().all().first().filter { it.excludedFromTimeline || it.hidden }.map { it.relativePath }
+            (legacy + ruled).distinct()
+        }.getOrDefault(emptyList())
         val favs = runCatching { db.favorites().ids().first().size }.getOrDefault(0)
-        val rows = (repo.queryAll(MediaFilter(excludedPaths = excluded), limit = 10000) as? FarResult.Ok)?.value ?: emptyList()
-        syncFromRows(ctx, rows, favs)
+        val stats = (repo.computeStats(MediaFilter(excludedPaths = excluded)) as? FarResult.Ok)?.value
+        if (stats != null) {
+            runCatching {
+                ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                    .putInt(K_PHOTOS, stats.photoCount)
+                    .putInt(K_VIDEOS, stats.videoCount)
+                    .putInt(K_FAVS, favs)
+                    .putLong(K_BYTES, stats.totalBytes)
+                    .putLong(K_UPDATED, System.currentTimeMillis())
+                    .apply()
+                notifyWidgets(ctx)
+            }
+        }
     }
 
     fun notifyWidgets(ctx: Context) {

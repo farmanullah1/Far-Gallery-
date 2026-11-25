@@ -3,7 +3,10 @@ package com.example.ui.theme
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.database.ContentObserver
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.FiniteAnimationSpec
@@ -24,10 +27,14 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
@@ -44,13 +51,14 @@ import androidx.core.view.WindowCompat
 import com.example.R
 
 enum class ThemeMode {
-    System, Light, Dark, Amoled;
+    System, Light, Dark, Amoled, HighContrast;
 
     fun next(): ThemeMode = when (this) {
         System -> Light
         Light -> Dark
         Dark -> Amoled
-        Amoled -> System
+        Amoled -> HighContrast
+        HighContrast -> System
     }
 
     fun labelRes(): Int = when (this) {
@@ -58,6 +66,7 @@ enum class ThemeMode {
         Light -> R.string.theme_light
         Dark -> R.string.theme_dark
         Amoled -> R.string.theme_amoled
+        HighContrast -> R.string.theme_high_contrast
     }
 }
 
@@ -72,14 +81,17 @@ object FarSpacing {
 }
 
 object FarPalette {
+    val Slate = Color(0xFF476A94) // calm neutral slate-blue default
     val Blue = Color(0xFF0A84FF)
-    val Green = Color(0xFF30D158)
-    val Orange = Color(0xFFFF9F0A)
-    val Pink = Color(0xFFFF375F)
-    val Purple = Color(0xFFBF5AF2)
+    val Green = Color(0xFF2FA858)
+    val Orange = Color(0xFFE68A00)
+    val Purple = Color(0xFF9F5AF2)
+    val NeonCyan = Color(0xFF00E5FF)
+    val NeonPink = Color(0xFFFF2A85)
+    val Pink = NeonPink
     val CameraYellow = Color(0xFFFFD60A)
     val RecordRed = Color(0xFFFF3B30)
-    val curated = listOf(Blue, Green, Orange, Pink, Purple)
+    val curated = listOf(Slate, Blue, Green, Orange, Purple, NeonCyan, NeonPink)
 }
 
 @Immutable
@@ -111,75 +123,118 @@ val LocalIsDark = compositionLocalOf { false }
 val LocalHapticsEnabled = compositionLocalOf { true }
 val LocalSemanticColors = compositionLocalOf { lightSemanticColors() }
 
-private fun lightSemanticColors() = FarSemanticColors(
-    success = Color(0xFF1B873B),
+private fun lightSemanticColors(highContrast: Boolean = false) = FarSemanticColors(
+    success = if (highContrast) Color(0xFF0B5F23) else Color(0xFF1B873B),
     successContainer = Color(0xFFE6F4EA),
-    warning = Color(0xFFA85700),
+    warning = if (highContrast) Color(0xFF7D3B00) else Color(0xFFA85700),
     warningContainer = Color(0xFFFEF3E0),
-    info = Color(0xFF0A66C2),
-    cardBorder = Color(0x1C000000),
+    info = if (highContrast) Color(0xFF003FA3) else Color(0xFF0A66C2),
+    cardBorder = if (highContrast) Color(0xCC000000) else Color(0x1C000000),
     elevatedSurface = Color(0xFFFFFFFF),
 )
 
-private fun darkSemanticColors(amoled: Boolean) = FarSemanticColors(
-    success = Color(0xFF34C759),
+private fun darkSemanticColors(amoled: Boolean, highContrast: Boolean = false) = FarSemanticColors(
+    success = if (highContrast) Color(0xFF6DFF96) else Color(0xFF34C759),
     successContainer = Color(0xFF132E1C),
-    warning = Color(0xFFFFB340),
+    warning = if (highContrast) Color(0xFFFFCE6B) else Color(0xFFFFB340),
     warningContainer = Color(0xFF2D210B),
-    info = Color(0xFF64B5F6),
-    cardBorder = if (amoled) Color(0x36FFFFFF) else Color(0x28FFFFFF),
-    elevatedSurface = if (amoled) Color(0xFF0E0E12) else Color(0xFF1B1B20),
+    info = if (highContrast) Color(0xFF7AD7FF) else Color(0xFF64B5F6),
+    cardBorder = when {
+        highContrast -> Color(0xE6FFFFFF)
+        amoled -> Color(0x36FFFFFF)
+        else -> Color(0x28FFFFFF)
+    },
+    elevatedSurface = when {
+        highContrast -> Color(0xFF000000)
+        amoled -> Color(0xFF0E0E12)
+        else -> Color(0xFF1B1B20)
+    },
 )
 
-private fun lightGlass() = GlassTokens(
-    tint = Color(0xFFFFFFFF).copy(alpha = 0.80f),
-    tintStrong = Color(0xFFFFFFFF).copy(alpha = 0.92f),
-    borderTop = Color.White.copy(alpha = 0.98f),
-    borderBottom = Color.Black.copy(alpha = 0.14f),
-    fallback = Color(0xFFF6F7FA),
-    blur = 24.dp,
+private fun lightGlass(highContrast: Boolean = false) = GlassTokens(
+    tint = Color(0xFFFFFFFF).copy(alpha = if (highContrast) 0.98f else 0.80f),
+    tintStrong = Color(0xFFFFFFFF).copy(alpha = if (highContrast) 1.0f else 0.92f),
+    borderTop = if (highContrast) Color.Black else Color.White.copy(alpha = 0.98f),
+    borderBottom = if (highContrast) Color.Black else Color.Black.copy(alpha = 0.14f),
+    fallback = if (highContrast) Color.White else Color(0xFFF6F7FA),
+    blur = if (highContrast) 0.dp else 24.dp,
 )
 
-private fun darkGlass(amoled: Boolean = false) = GlassTokens(
-    tint = (if (amoled) Color(0xFF101015) else Color(0xFF1B1B21)).copy(alpha = if (amoled) 0.84f else 0.78f),
-    tintStrong = (if (amoled) Color(0xFF14141A) else Color(0xFF1E1E26)).copy(alpha = 0.92f),
-    borderTop = Color.White.copy(alpha = if (amoled) 0.50f else 0.42f),
-    borderBottom = Color.White.copy(alpha = if (amoled) 0.16f else 0.14f),
-    fallback = if (amoled) Color(0xFF101014) else Color(0xFF1E1E24),
-    blur = 24.dp,
+private fun darkGlass(amoled: Boolean = false, highContrast: Boolean = false) = GlassTokens(
+    tint = (if (amoled || highContrast) Color(0xFF08080A) else Color(0xFF1B1B21)).copy(
+        alpha = when {
+            highContrast -> 0.98f
+            amoled -> 0.84f
+            else -> 0.78f
+        }
+    ),
+    tintStrong = (if (amoled || highContrast) Color.Black else Color(0xFF1E1E26)).copy(alpha = if (highContrast) 1.0f else 0.92f),
+    borderTop = if (highContrast) Color.White else Color.White.copy(alpha = if (amoled) 0.50f else 0.42f),
+    borderBottom = if (highContrast) Color.White else Color.White.copy(alpha = if (amoled) 0.16f else 0.14f),
+    fallback = when {
+        highContrast -> Color.Black
+        amoled -> Color(0xFF101014)
+        else -> Color(0xFF1E1E24)
+    },
+    blur = if (highContrast) 0.dp else 24.dp,
 )
 
-private fun lightScheme(accent: Color) = lightColorScheme(
-    primary = accent,
-    onPrimary = Color.White,
-    primaryContainer = accent.copy(alpha = 0.14f),
-    onPrimaryContainer = accent,
-    background = Color(0xFFFAFAFC),
-    onBackground = Color(0xFF0B0B0F),
-    surface = Color(0xFFFFFFFF),
-    onSurface = Color(0xFF0B0B0F),
-    surfaceVariant = Color(0xFFEEF0F4),
-    onSurfaceVariant = Color(0xFF4A4A52),
-    outlineVariant = Color(0x20000000),
-    error = Color(0xFFD93025),
-    onError = Color.White,
-)
+private fun legibleOnAccent(accent: Color): Color =
+    if (accent.luminance() > 0.45f) Color(0xFF0B0B0F) else Color.White
 
-private fun darkScheme(accent: Color, amoled: Boolean) = darkColorScheme(
-    primary = accent,
-    onPrimary = Color.White,
-    primaryContainer = accent.copy(alpha = 0.24f),
-    onPrimaryContainer = Color.White,
-    background = if (amoled) Color.Black else Color(0xFF0B0B0F),
-    onBackground = Color.White,
-    surface = if (amoled) Color(0xFF0B0B0E) else Color(0xFF17171B),
-    onSurface = Color.White,
-    surfaceVariant = if (amoled) Color(0xFF16161B) else Color(0xFF24242A),
-    onSurfaceVariant = if (amoled) Color(0xFFC2C2CA) else Color(0xFFBDBDC5),
-    outlineVariant = if (amoled) Color(0x3EFFFFFF) else Color(0x32FFFFFF),
-    error = Color(0xFFFF453A),
-    onError = Color.White,
-)
+private fun lightScheme(accent: Color, highContrast: Boolean = false): ColorScheme {
+    val primary = if (highContrast && accent.luminance() > 0.25f) Color(0xFF003FA3) else accent
+    return lightColorScheme(
+        primary = primary,
+        onPrimary = legibleOnAccent(primary),
+        primaryContainer = primary.copy(alpha = if (highContrast) 0.18f else 0.14f),
+        onPrimaryContainer = if (primary.luminance() > 0.45f) Color(0xFF0B0B0F) else primary,
+        background = if (highContrast) Color.White else Color(0xFFFAFAFC),
+        onBackground = if (highContrast) Color.Black else Color(0xFF0B0B0F),
+        surface = Color(0xFFFFFFFF),
+        onSurface = if (highContrast) Color.Black else Color(0xFF0B0B0F),
+        surfaceVariant = if (highContrast) Color(0xFFECEEF2) else Color(0xFFEEF0F4),
+        onSurfaceVariant = if (highContrast) Color(0xFF1C1C22) else Color(0xFF4A4A52),
+        outlineVariant = if (highContrast) Color(0xB3000000) else Color(0x20000000),
+        error = if (highContrast) Color(0xFFB00020) else Color(0xFFD93025),
+        onError = Color.White,
+    )
+}
+
+private fun darkScheme(accent: Color, amoled: Boolean, highContrast: Boolean = false): ColorScheme {
+    val primary = if (highContrast && accent.luminance() < 0.35f) Color(0xFF7AD7FF) else accent
+    return darkColorScheme(
+        primary = primary,
+        onPrimary = legibleOnAccent(primary),
+        primaryContainer = primary.copy(alpha = if (highContrast) 0.32f else 0.24f),
+        onPrimaryContainer = Color.White,
+        background = if (amoled || highContrast) Color.Black else Color(0xFF0B0B0F),
+        onBackground = Color.White,
+        surface = when {
+            highContrast -> Color.Black
+            amoled -> Color(0xFF0B0B0E)
+            else -> Color(0xFF17171B)
+        },
+        onSurface = Color.White,
+        surfaceVariant = when {
+            highContrast -> Color(0xFF16161C)
+            amoled -> Color(0xFF16161B)
+            else -> Color(0xFF24242A)
+        },
+        onSurfaceVariant = when {
+            highContrast -> Color(0xFFEAEAF0)
+            amoled -> Color(0xFFC2C2CA)
+            else -> Color(0xFFBDBDC5)
+        },
+        outlineVariant = when {
+            highContrast -> Color(0xCCFFFFFF)
+            amoled -> Color(0x3EFFFFFF)
+            else -> Color(0x32FFFFFF)
+        },
+        error = if (highContrast) Color(0xFFFF6E68) else Color(0xFFFF453A),
+        onError = Color.Black,
+    )
+}
 
 internal fun enforceThemeContrast(base: ColorScheme, dark: Boolean, amoled: Boolean): ColorScheme = when {
     !dark -> base.copy(
@@ -237,11 +292,26 @@ object FarMotion {
 @Composable
 fun rememberSystemReducedMotion(): Boolean {
     val ctx = LocalContext.current
-    return remember {
-        runCatching {
-            Settings.Global.getFloat(ctx.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
-        }.getOrDefault(false)
+    fun readScale(): Boolean = runCatching {
+        Settings.Global.getFloat(ctx.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
+    }.getOrDefault(false)
+
+    var reduced by remember { mutableStateOf(readScale()) }
+    DisposableEffect(ctx) {
+        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                reduced = readScale()
+            }
+        }
+        val uri = Settings.Global.getUriFor(Settings.Global.ANIMATOR_DURATION_SCALE)
+        if (uri != null) {
+            runCatching { ctx.contentResolver.registerContentObserver(uri, false, observer) }
+        }
+        onDispose {
+            runCatching { ctx.contentResolver.unregisterContentObserver(observer) }
+        }
     }
+    return reduced
 }
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {
@@ -253,7 +323,7 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
 @Composable
 fun FarTheme(
     mode: ThemeMode = ThemeMode.System,
-    accent: Color = FarPalette.Blue,
+    accent: Color = FarPalette.Slate,
     useDynamicColor: Boolean = false,
     reduceMotion: Boolean = rememberSystemReducedMotion(),
     reduceTransparency: Boolean = false,
@@ -261,14 +331,18 @@ fun FarTheme(
     forceDarkSystemBars: Boolean? = null,
     content: @Composable () -> Unit,
 ) {
+    val systemDark = isSystemInDarkTheme()
+    val highContrast = mode == ThemeMode.HighContrast
     val dark = when (mode) {
-        ThemeMode.System -> isSystemInDarkTheme()
+        ThemeMode.System -> systemDark
         ThemeMode.Light -> false
         ThemeMode.Dark, ThemeMode.Amoled -> true
+        ThemeMode.HighContrast -> systemDark
     }
     val amoled = dark && mode == ThemeMode.Amoled
     val ctx = LocalContext.current
     val baseScheme: ColorScheme = when {
+        highContrast -> if (dark) darkScheme(accent, amoled = true, highContrast = true) else lightScheme(accent, highContrast = true)
         useDynamicColor && Build.VERSION.SDK_INT >= 31 ->
             runCatching {
                 if (dark) dynamicDarkColorScheme(ctx) else dynamicLightColorScheme(ctx)
@@ -278,7 +352,7 @@ fun FarTheme(
         dark -> darkScheme(accent, amoled)
         else -> lightScheme(accent)
     }
-    val scheme = enforceThemeContrast(baseScheme, dark, amoled)
+    val scheme = enforceThemeContrast(baseScheme, dark, amoled || (highContrast && dark))
 
     val view = LocalView.current
     if (!view.isInEditMode) {
@@ -295,12 +369,12 @@ fun FarTheme(
     }
 
     CompositionLocalProvider(
-        LocalGlass provides (if (dark) darkGlass(amoled) else lightGlass()),
+        LocalGlass provides (if (dark) darkGlass(amoled, highContrast) else lightGlass(highContrast)),
         LocalReducedMotion provides reduceMotion,
-        LocalReduceTransparency provides reduceTransparency,
+        LocalReduceTransparency provides (reduceTransparency || highContrast),
         LocalIsDark provides dark,
         LocalHapticsEnabled provides hapticsEnabled,
-        LocalSemanticColors provides (if (dark) darkSemanticColors(amoled) else lightSemanticColors()),
+        LocalSemanticColors provides (if (dark) darkSemanticColors(amoled, highContrast) else lightSemanticColors(highContrast)),
         LocalContentColor provides scheme.onBackground,
     ) {
         MaterialTheme(colorScheme = scheme, typography = FarTypography, shapes = FarShapes) {

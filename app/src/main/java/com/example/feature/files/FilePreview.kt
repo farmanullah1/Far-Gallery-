@@ -217,7 +217,9 @@ private fun TextPreview(uri: Uri, modifier: Modifier) {
     LaunchedEffect(uri) {
         text = withContext(Dispatchers.IO) {
             farCatching {
-                ctx.contentResolver.openInputStream(uri)!!.use { it.readNBytes(256 * 1024).toString(Charsets.UTF_8) }
+                val stream = ctx.contentResolver.openInputStream(uri)
+                    ?: throw java.io.FileNotFoundException("Preview stream unavailable")
+                stream.use { it.readNBytes(256 * 1024).toString(Charsets.UTF_8) }
             }
         }
     }

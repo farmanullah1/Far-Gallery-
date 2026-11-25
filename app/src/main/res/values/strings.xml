@@ -85,7 +85,7 @@
     <string name="language_system">System default</string>
     <string name="language_en">English</string>
     <string name="language_ur">اردو (Urdu)</string>
-    <string name="about_offline_note">Far Gallery works offline and needs no account. This build has no internet permission and no hidden vault.</string>
+    <string name="about_offline_note">Far Gallery works completely offline and needs no account. This build has no internet permission and keeps your Private Vault encrypted locally with Android Keystore.</string>
 
     <!-- Viewer, Compare & Histogram -->
     <string name="viewer_compare">Compare</string>
@@ -184,6 +184,14 @@
     <string name="err_io_summary">An I/O error prevented completion. Original files are safe.</string>
     <string name="err_invalid_title">Invalid operation</string>
     <string name="err_invalid_summary">Check your input and try again (%1$s).</string>
+    <string name="err_cancelled_title">Operation cancelled</string>
+    <string name="err_cancelled_summary">The task was stopped before finishing. Originals are untouched.</string>
+    <string name="err_timeout_title">Operation timed out</string>
+    <string name="err_timeout_summary">The operation took too long to finish. Try again on a smaller batch.</string>
+    <string name="err_hardware_title">Camera or hardware unavailable</string>
+    <string name="err_hardware_summary">The device hardware isn\'t ready right now.</string>
+    <string name="err_model_title">On-device model unavailable</string>
+    <string name="err_model_summary">The offline recognition model isn\'t ready yet.</string>
     <string name="err_unknown_title">Unexpected problem</string>
     <string name="err_unknown_summary">Something went wrong, but your original files were not modified.</string>
 
@@ -401,4 +409,113 @@
     <string name="viewer_pdf_saved">Saved PDF to Downloads/Far Gallery</string>
     <string name="viewer_pdf_failed">Couldn\'t export PDF</string>
     <string name="camera_ev_reset_hint">Hold EV badge to reset to 0.0</string>
+    <string name="settings_backup_export">Export library metadata backup</string>
+    <string name="settings_backup_import">Import library metadata backup</string>
+    <string name="settings_backup_exported">Metadata backup saved</string>
+    <string name="settings_backup_imported">Restored %1$d albums, %2$d favorites, %3$d tags</string>
+    <string name="settings_backup_failed">Metadata backup operation failed</string>
+
+    <!-- Folder Rules & Quarantine -->
+    <string name="folder_rule_timeline">Exclude from timeline</string>
+    <string name="folder_rule_ocr">Exclude from OCR</string>
+    <string name="folder_rule_hidden">Hide folder</string>
+    <string name="settings_quarantine_title">Quarantined &amp; unreadable items (%1$d)</string>
+    <string name="settings_quarantine_body">These files failed decoding or indexing and were skipped automatically. Your originals remain untouched.</string>
+    <string name="settings_quarantine_clear">Clear all</string>
+
+    <!-- Navigation & SAF Conflict Resolution -->
+    <string name="nav_camera">Camera</string>
+    <string name="files_conflict_title">Item already exists</string>
+    <string name="files_conflict_body">%1$d item(s) already exist in this folder (including %2$s). Choose how to continue:</string>
+    <string name="files_conflict_keep_both">Keep both</string>
+    <string name="files_conflict_replace">Replace</string>
+    <string name="files_conflict_skip">Skip duplicates</string>
+    <string name="theme_high_contrast">Contrast</string>
+    <string name="photos_sub_library">Library</string>
+    <string name="photos_sub_albums">Albums</string>
+    <string name="photos_sub_search">Search</string>
+
+    <!-- Private Vault & Identity Documents -->
+    <string name="collection_vault">Private Vault</string>
+    <string name="vault_title">Private Vault</string>
+    <string name="vault_settings_button">Open Private Vault &amp; IDs</string>
+    <string name="vault_settings_subtitle">Hardware-encrypted media and identity documents protected by PIN and biometrics.</string>
+    <string name="vault_lock_now">Lock vault</string>
+    <string name="vault_setup_title">Create Vault PIN</string>
+    <string name="vault_setup_confirm_title">Confirm Vault PIN</string>
+    <string name="vault_setup_body">Choose a 4 to 8 digit PIN to encrypt access to your Private Vault and Identity Documents.</string>
+    <string name="vault_unlock_title">Unlock Private Vault</string>
+    <string name="vault_unlock_body">Enter your PIN or use biometrics to view encrypted items.</string>
+    <string name="vault_use_biometrics">Use biometrics</string>
+    <string name="vault_use_pin">Use PIN</string>
+    <string name="vault_pin_mismatch">PINs did not match. Try again.</string>
+    <string name="vault_pin_wrong">Incorrect PIN (%1$d failed attempts)</string>
+    <string name="vault_pin_cooldown">Too many attempts. Try again in %1$ds.</string>
+    <string name="vault_tab_media">Private Media</string>
+    <string name="vault_tab_ids">Identity Docs</string>
+    <string name="vault_import_media">Import photos or videos</string>
+    <string name="vault_media_empty_title">Vault is empty</string>
+    <string name="vault_media_empty_body">Import sensitive photos or videos here. Encrypted files are hidden from gallery search, OCR, and backups.</string>
+    <string name="vault_ids_empty_title">No identity documents</string>
+    <string name="vault_ids_empty_body">Store encrypted copies and expiry dates for passports, IDs, licenses, and insurance cards.</string>
+    <string name="vault_add_id">Add ID document</string>
+    <string name="vault_edit_id">Edit ID document</string>
+    <string name="vault_export_gallery">Export back to Gallery</string>
+    <string name="vault_exported_ok">Exported decrypted copy to Gallery</string>
+    <string name="vault_remove_originals_title">Remove originals from Gallery?</string>
+    <string name="vault_remove_originals_body">%1$d item(s) encrypted in Private Vault. Do you want Android to delete the original unencrypted copies from your device gallery?</string>
+    <string name="vault_keep_originals">Keep originals</string>
+    <string name="vault_delete_originals">Delete originals</string>
+    <string name="vault_delete_item_title">Delete from Private Vault?</string>
+    <string name="vault_delete_item_body">This permanently removes the encrypted file from Far Gallery.</string>
+    <string name="vault_security_settings">Vault security</string>
+    <string name="vault_biometric_toggle">Unlock with fingerprint / face</string>
+    <string name="vault_change_pin">Change Vault PIN</string>
+    <string name="vault_pin_changed">Vault PIN updated</string>
+    <string name="vault_doc_type">Document type</string>
+    <string name="vault_doc_title_label">Document title</string>
+    <string name="vault_doc_holder_label">Full name</string>
+    <string name="vault_doc_number_label">Document number</string>
+    <string name="vault_doc_issuer_label">Issuing authority</string>
+    <string name="vault_doc_expiry_label">Expiry date (YYYY-MM-DD, optional)</string>
+    <string name="vault_doc_notes_label">Private notes (optional)</string>
+    <string name="vault_doc_front_photo">Front photo</string>
+    <string name="vault_doc_back_photo">Back photo</string>
+    <string name="vault_doc_attached">Attached</string>
+    <string name="vault_doc_expired">Expired %1$dd ago</string>
+    <string name="vault_doc_expiring">Expires in %1$dd</string>
+    <string name="vault_doc_valid">Valid (%1$dd left)</string>
+    <string name="vault_doc_copy_number">Copy number</string>
+    <string name="vault_doc_copied">Document number copied</string>
+
+    <!-- Natural Search, Creation Studio, SHA-256 Verify, Settings Search & Activity -->
+    <string name="search_parsed_summary">Understood: %1$s</string>
+    <string name="batch_create">Create</string>
+    <string name="creation_studio_title">Creation Studio</string>
+    <string name="creation_mode_collage">Photo Collage</string>
+    <string name="creation_mode_pdf">Multi-page PDF</string>
+    <string name="creation_collage_count">Arranging %1$d photos into an adaptive grid JPEG</string>
+    <string name="creation_collage_cap_note">Using first %1$d of %2$d selected photos</string>
+    <string name="creation_aspect_label">Aspect ratio</string>
+    <string name="creation_spacing_label">Border spacing</string>
+    <string name="creation_spacing_none">None</string>
+    <string name="creation_spacing_tight">Tight</string>
+    <string name="creation_spacing_classic">Classic</string>
+    <string name="creation_bg_label">Background</string>
+    <string name="creation_pdf_count">Creating PDF from %1$d photo(s)</string>
+    <string name="creation_pdf_book">Photo Book</string>
+    <string name="creation_pdf_sheet">Contact Sheet</string>
+    <string name="creation_pdf_book_hint">One full photo per page saved offline in Downloads/Far Gallery.</string>
+    <string name="creation_pdf_sheet_hint">Up to 6 photos per A4 page in a clean 2×3 printable grid.</string>
+    <string name="creation_collage_saved">Saved collage to Pictures/Far Gallery</string>
+    <string name="creation_pdf_saved">Saved PDF to Downloads/Far Gallery</string>
+    <string name="files_verify_sha256_hint">Paste expected SHA-256 to verify</string>
+    <string name="files_verify_sha256_match">✓ Matches expected SHA-256</string>
+    <string name="files_verify_sha256_mismatch">Mismatch — digest does not match</string>
+    <string name="settings_search_hint">Search settings…</string>
+    <string name="settings_search_empty_title">No matching settings</string>
+    <string name="settings_search_empty_body">No setting sections match \"%1$s\".</string>
+    <string name="settings_activity_title">Recent activity</string>
+    <string name="settings_activity_empty">No recent batch or transfer operations recorded.</string>
+    <string name="settings_activity_clear">Clear history</string>
 </resources>
