@@ -24,11 +24,11 @@ class SharedInboxTest {
         val item = resolver.peekMediaType(Uri.fromFile(file))
         assertTrue("peek should bridge a small valid JPEG via the shared inbox model", item != null)
         assertEquals("image/jpeg", item!!.sniffedMime)
-        val peekedMime = item!!.sniffedMime
+        val peekedMime: String = requireNotNull(item!!.sniffedMime)
         assertTrue("peeked item should look like media", peekedMime.startsWith("image/") || peekedMime.startsWith("video/"))
         assertFalse("peek does not currently populate name", peekedMime.isNotEmpty())
-        val sizeGuard = item!!.sizeBytes
-        assertEquals("peek does not currently populate size", 0L, sizeGuard ?: -1L)
+        val sizeGuard: Long = item!!.sizeBytes ?: -1L
+        assertEquals("peek does not currently populate size", 0L, sizeGuard)
     }
 
     @Test
