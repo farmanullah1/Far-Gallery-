@@ -1,0 +1,6 @@
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :app:assembleDebug
+
+BUILD SUCCESSFUL in 1s

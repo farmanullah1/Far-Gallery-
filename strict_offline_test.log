@@ -1,0 +1,65 @@
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:generateDebugBuildConfig UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:processDebugNavigationResources UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:generateDebugRFile UP-TO-DATE
+> Task :app:kspDebugKotlin UP-TO-DATE
+> Task :app:compileDebugKotlin UP-TO-DATE
+> Task :app:javaPreCompileDebug UP-TO-DATE
+> Task :app:compileDebugJavaWithJavac UP-TO-DATE
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:compileDebugNavigationResources UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :app:processDebugMainManifest UP-TO-DATE
+> Task :app:processDebugManifest UP-TO-DATE
+> Task :app:processDebugManifestForPackage UP-TO-DATE
+> Task :app:processDebugResources UP-TO-DATE
+> Task :app:preDebugUnitTestBuild UP-TO-DATE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:javaPreCompileDebugUnitTest
+> Task :app:mergeDebugAssets UP-TO-DATE
+> Task :app:packageDebugUnitTestForUnitTest
+> Task :app:bundleDebugClassesToRuntimeJar
+> Task :app:bundleDebugClassesToCompileJar
+
+> Task :app:processDebugUnitTestManifest
+D:\Ai Studio\Far-Gallery-\app\src\main\AndroidManifest.xml:6:5-87 Warning:
+	uses-permission#android.permission.INTERNET was tagged at AndroidManifest.xml:6 to remove other declarations but no other declaration present
+D:\Ai Studio\Far-Gallery-\app\src\main\AndroidManifest.xml:7:5-99 Warning:
+	uses-permission#android.permission.ACCESS_NETWORK_STATE was tagged at AndroidManifest.xml:7 to remove other declarations but no other declaration present
+D:\Ai Studio\Far-Gallery-\app\src\main\AndroidManifest.xml:231:9-233:35 Warning:
+	service#com.google.android.datatransport.runtime.backends.TransportBackendDiscovery was tagged at AndroidManifest.xml:231 to remove other declarations but no other declaration present
+D:\Ai Studio\Far-Gallery-\app\src\main\AndroidManifest.xml:234:9-236:35 Warning:
+	service#com.google.android.datatransport.runtime.scheduling.jobscheduling.JobInfoSchedulerService was tagged at AndroidManifest.xml:234 to remove other declarations but no other declaration present
+D:\Ai Studio\Far-Gallery-\app\src\main\AndroidManifest.xml:237:9-239:35 Warning:
+	receiver#com.google.android.datatransport.runtime.scheduling.jobscheduling.AlarmManagerSchedulerBroadcastReceiver was tagged at AndroidManifest.xml:237 to remove other declarations but no other declaration present
+
+> Task :app:kspDebugUnitTestKotlin
+> Task :app:processDebugJavaRes UP-TO-DATE
+> Task :app:generateDebugUnitTestConfig
+> Task :app:compileDebugUnitTestKotlin
+> Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processDebugUnitTestJavaRes
+> Task :app:testDebugUnitTest
+> Task :app:testDebugUnitTest FAILED
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:testDebugUnitTest'.
+> java.nio.file.NoSuchFileException: D:\Ai Studio\Far-Gallery-\app\build\test-results\testDebugUnitTest\binary\in-progress-results-generic17480888457324814597.bin
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights from a Build Scan (powered by Develocity).
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 9m 17s
+32 actionable tasks: 10 executed, 22 up-to-date
