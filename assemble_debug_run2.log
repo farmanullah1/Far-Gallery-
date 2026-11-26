@@ -1,0 +1,19 @@
+Starting a Gradle Daemon, 1 busy and 2 incompatible and 1 stopped Daemons could not be reused, use --status for details
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Timeout waiting to lock Configuration Cache (D:\Ai Studio\Far-Gallery-\.gradle\configuration-cache). It is currently in use by another process.
+Owner PID: 11100
+Our PID: 24416
+Owner Operation: 
+Our operation: 
+Lock file: D:\Ai Studio\Far-Gallery-\.gradle\configuration-cache\configuration-cache.lock
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights from a Build Scan (powered by Develocity).
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 3m 38s
