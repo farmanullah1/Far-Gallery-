@@ -495,4 +495,39 @@
     <string name="settings_activity_title">حالیہ سرگرمی</string>
     <string name="settings_activity_empty">حالیہ بیچ یا منتقلی کی کوئی سرگرمی ریکارڈ نہیں۔</string>
     <string name="settings_activity_clear">تاریخ صاف کریں</string>
+
+    <!-- Offline EXIF Location & Enhanced Text/Hex File Preview -->
+    <string name="viewer_location_label">مقام: %1$s</string>
+    <string name="viewer_location_copy">نقاط کاپی کریں</string>
+    <string name="viewer_location_copied">نقاط کاپی ہو گئے</string>
+    <string name="viewer_location_open_map">نقشہ ایپ</string>
+    <string name="viewer_location_privacy_note">مقام مقامی رہتا ہے اور Share clean پر خودکار طور پر ہٹا دیا جاتا ہے۔</string>
+    <string name="files_preview_find">تلاش</string>
+    <string name="files_preview_find_hint">فائل میں تلاش کریں…</string>
+    <string name="files_preview_matches">%1$d سطور</string>
+    <string name="files_preview_edit">ترمیم</string>
+    <string name="files_preview_save">محفوظ کریں</string>
+    <string name="files_preview_saved">تبدیلیاں محفوظ ہو گئیں</string>
+    <string name="files_preview_save_failed">یہ فائل صرف پڑھنے کے لیے ہے یا اجازت نہیں</string>
+    <string name="files_preview_hex_header">صرف پڑھنے والا بائنری انسپکٹر</string>
+    <string name="files_preview_hex_signature">شناخت: %1$s · پہلے %2$d بائٹس</string>
+
+    <!-- Camera2 Capability Summary & Editor Passport/Split Export -->
+    <string name="camera_hw_summary_label">%1$s</string>
+    <string name="editor_crop_passport">پاسپورٹ</string>
+    <string name="editor_crop_wallpaper">وال پیپر</string>
+    <string name="editor_save_split">پہلے/بعد</string>
+    <string name="editor_split_saved">پہلے/بعد موازنہ Pictures/Far Gallery میں محفوظ ہو گیا</string>
+
+    <!-- System Intents, Picker & Opt-In DocumentsProvider (P44) -->
+    <string name="provider_root_summary">Far Files · مقامی فولڈر</string>
+    <string name="files_expose_label">پِکر میں دکھائیں</string>
+    <string name="files_exposed_label">ظاہر شدہ</string>
+    <string name="files_exposed_hint">اینڈرائیڈ سسٹم Files پِکر میں نظر آئے گا (صرف پڑھنے کے لیے)</string>
+    <string name="files_exposed_msg">%1$s اب اینڈرائیڈ Files پِکر میں دستیاب ہے</string>
+    <string name="files_unexposed_msg">%1$s اینڈرائیڈ Files پِکر سے ہٹا دیا گیا</string>
+    <string name="picker_choose_single">درخواست کرنے والی ایپ کو بھیجنے کے لیے آئٹم پر ٹیپ کریں</string>
+    <string name="picker_choose_multi">واپس بھیجنے کے لیے %1$d تک آئٹمز منتخب کریں</string>
+    <string name="settings_oem_limits_title">سسٹم اور OEM ہارڈویئر کی حدود</string>
+    <string name="settings_oem_limits_body">اینڈرائیڈ میں کوئی یونیورسل سسٹم گیلری رول نہیں ہے۔ لاک اسکرین کیمرہ لانچ، پاور بٹن ڈبل پریس اور مخصوص کیمرہ بٹن ڈیوائس بنانے والے اور OS کے کنٹرول میں ہوتے ہیں اور تھرڈ پارٹی ایپس انہیں تبدیل نہیں کر سکتیں۔ Far Camera یا Far Gallery کھلے ہونے پر والیوم بٹن شٹر کے طور پر کام کرتے ہیں۔</string>
 </resources>

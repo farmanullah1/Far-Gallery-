@@ -121,7 +121,7 @@ enum class CameraMode(val label: String, val labelRes: Int) {
 
 enum class FlashMode { Off, Auto, On }
 
-/** Everything shown is derived from REAL capabilities queried from CameraInfo; nothing is assumed. */
+/** Everything shown is derived from REAL capabilities queried from CameraInfo & Camera2; nothing is assumed. */
 @Immutable
 data class CameraCapabilities(
     val lensZoomStops: List<Float>,
@@ -131,7 +131,20 @@ data class CameraCapabilities(
     val exposureRange: ClosedFloatingPointRange<Float>,
     val modes: List<CameraMode>,
     val hasFrontCamera: Boolean,
+    val hardwareLevelLabel: String = "Standard",
+    val supportsRaw: Boolean = false,
+    val maxFps: Int = 30,
+    val hasOpticalStabilization: Boolean = false,
+    val focalLengthsMm: List<Float> = emptyList(),
 )
+
+internal fun formatHardwareSummary(caps: CameraCapabilities): String = buildList {
+    add("HW: ${caps.hardwareLevelLabel}")
+    add("${caps.maxFps}fps")
+    caps.focalLengthsMm.firstOrNull()?.let { add("${"%.1f".format(java.util.Locale.US, it)}mm") }
+    if (caps.hasOpticalStabilization) add("OIS")
+    add(if (caps.supportsRaw) "RAW supported" else "JPEG")
+}.joinToString(" · ")
 
 @Immutable
 data class CameraUiState(
@@ -464,6 +477,16 @@ fun CameraScreen(
                             }
                         }
                     }
+                    Text(
+                        text = stringResource(R.string.camera_hw_summary_label, formatHardwareSummary(caps)),
+                        color = Color.White.copy(alpha = 0.72f),
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                            .testTag("camera_hw_summary"),
+                    )
                 }
             }
 

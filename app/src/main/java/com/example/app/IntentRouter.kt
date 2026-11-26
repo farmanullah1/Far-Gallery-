@@ -19,7 +19,20 @@ import java.io.FileNotFoundException
 sealed interface IncomingRoute {
     data object None : IncomingRoute
     data class ViewOrReceive(val intent: Intent, val shared: Boolean) : IncomingRoute
-    data class Pick(val multiple: Boolean, val maxItems: Int, val mimeTypes: List<String>) : IncomingRoute
+    data class Pick(val multiple: Boolean, val maxItems: Int, val mimeTypes: List<String>) : IncomingRoute {
+        /** Returns "image", "video", or "all" derived strictly from the caller's declared MIME filters. */
+        fun mediaKindHint(): String {
+            val cleaned = mimeTypes.map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+            if (cleaned.isEmpty() || cleaned.any { it == "*/*" }) return "all"
+            val wantsImages = cleaned.any { it.startsWith("image/") }
+            val wantsVideos = cleaned.any { it.startsWith("video/") }
+            return when {
+                wantsImages && !wantsVideos -> "image"
+                wantsVideos && !wantsImages -> "video"
+                else -> "all"
+            }
+        }
+    }
     data class Capture(val video: Boolean, val output: Uri?, val maxDurationSec: Int?, val maxBytes: Long?) : IncomingRoute
     data class Edit(val uri: Uri) : IncomingRoute
     data class OpenFolder(val uri: Uri) : IncomingRoute
@@ -100,14 +113,17 @@ object IntentResults {
         val r: ContentResolver = activity.contentResolver
         val out = Intent().addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         if (request.output != null) {
-            val input = r.openInputStream(saved) ?: throw FileNotFoundException("captured stream missing")
-            input.use { src ->
-                val target = r.openOutputStream(request.output, "w") ?: throw FileNotFoundException("output stream missing")
-                target.use { dst -> src.copyTo(dst) }
+            if (request.output != saved) {
+                val input = r.openInputStream(saved) ?: throw FileNotFoundException("captured stream missing")
+                input.use { src ->
+                    val target = r.openOutputStream(request.output, "w") ?: throw FileNotFoundException("output stream missing")
+                    target.use { dst -> src.copyTo(dst) }
+                }
+                runCatching { r.delete(saved, null, null) }
             }
-            r.delete(saved, null, null)
         } else {
             out.data = saved
+            out.clipData = ClipData.newRawUri("capture", saved)
             if (!request.video) {
                 val opts = BitmapFactory.Options().apply { inSampleSize = 8 }
                 r.openInputStream(saved)?.use { BitmapFactory.decodeStream(it, null, opts) }
@@ -115,6 +131,11 @@ object IntentResults {
             }
         }
         activity.setResult(Activity.RESULT_OK, out)
+        activity.finish()
+    }
+
+    fun cancel(activity: Activity) {
+        activity.setResult(Activity.RESULT_CANCELED)
         activity.finish()
     }
 }

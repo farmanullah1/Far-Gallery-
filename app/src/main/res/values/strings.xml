@@ -518,4 +518,39 @@
     <string name="settings_activity_title">Recent activity</string>
     <string name="settings_activity_empty">No recent batch or transfer operations recorded.</string>
     <string name="settings_activity_clear">Clear history</string>
+
+    <!-- Offline EXIF Location & Enhanced Text/Hex File Preview -->
+    <string name="viewer_location_label">Location: %1$s</string>
+    <string name="viewer_location_copy">Copy coords</string>
+    <string name="viewer_location_copied">Coordinates copied</string>
+    <string name="viewer_location_open_map">Maps app</string>
+    <string name="viewer_location_privacy_note">Location stays local and is stripped automatically on Share clean.</string>
+    <string name="files_preview_find">Find</string>
+    <string name="files_preview_find_hint">Find in file…</string>
+    <string name="files_preview_matches">%1$d line(s)</string>
+    <string name="files_preview_edit">Edit</string>
+    <string name="files_preview_save">Save</string>
+    <string name="files_preview_saved">Saved changes</string>
+    <string name="files_preview_save_failed">Read-only file or permission denied</string>
+    <string name="files_preview_hex_header">Read-only binary inspector</string>
+    <string name="files_preview_hex_signature">Signature: %1$s · Showing first %2$d bytes</string>
+
+    <!-- Camera2 Capability Summary & Editor Passport/Split Export -->
+    <string name="camera_hw_summary_label">%1$s</string>
+    <string name="editor_crop_passport">Passport</string>
+    <string name="editor_crop_wallpaper">Wallpaper</string>
+    <string name="editor_save_split">Before/After</string>
+    <string name="editor_split_saved">Saved Before/After split to Pictures/Far Gallery</string>
+
+    <!-- System Intents, Picker & Opt-In DocumentsProvider (P44) -->
+    <string name="provider_root_summary">Far Files · Local folder</string>
+    <string name="files_expose_label">Share to picker</string>
+    <string name="files_exposed_label">Exposed</string>
+    <string name="files_exposed_hint">Visible in Android system Files picker (read-only)</string>
+    <string name="files_exposed_msg">%1$s is now visible in Android Files picker</string>
+    <string name="files_unexposed_msg">%1$s removed from Android Files picker</string>
+    <string name="picker_choose_single">Tap an item to return it to the requesting app</string>
+    <string name="picker_choose_multi">Select up to %1$d item(s) to return</string>
+    <string name="settings_oem_limits_title">System &amp; OEM hardware limits</string>
+    <string name="settings_oem_limits_body">Android has no universal system gallery role. Lock-screen camera launch, power-button double press, and dedicated shutter keys are controlled by your device manufacturer and OS and cannot be overridden by third-party apps. Volume keys work as a shutter while Far Camera or Far Gallery is open.</string>
 </resources>

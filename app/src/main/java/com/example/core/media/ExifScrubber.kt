@@ -24,7 +24,25 @@ data class QuickExifInfo(
     val iso: String?,
     val focalLength: String?,
     val hasGps: Boolean,
+    val latitude: Double? = null,
+    val longitude: Double? = null,
 ) {
+    fun formattedCoordinates(): String? {
+        val lat = latitude ?: return null
+        val lon = longitude ?: return null
+        if (!lat.isFinite() || !lon.isFinite()) return null
+        val latHem = if (lat >= 0.0) "N" else "S"
+        val lonHem = if (lon >= 0.0) "E" else "W"
+        return String.format(
+            java.util.Locale.US,
+            "%.4f° %s, %.4f° %s",
+            kotlin.math.abs(lat),
+            latHem,
+            kotlin.math.abs(lon),
+            lonHem,
+        )
+    }
+
     fun summaryLine(): String? {
         val parts = buildList {
             aperture?.let { add(it) }
@@ -73,9 +91,22 @@ object ExifScrubber {
                     ?: exif.getAttributeDouble(ExifInterface.TAG_FOCAL_LENGTH, 0.0)
                         .takeIf { it > 0.0 }
                         ?.let { "${it.toInt()}mm" }
-                val hasGps = exif.getAttribute(ExifInterface.TAG_GPS_LATITUDE) != null &&
-                    exif.getAttribute(ExifInterface.TAG_GPS_LONGITUDE) != null
-                QuickExifInfo(camera, aperture, exposure, iso, focal, hasGps).also { info ->
+                val latLon = FloatArray(2)
+                @Suppress("DEPRECATION")
+                val hasValidLatLon = exif.getLatLong(latLon)
+                val hasGps = hasValidLatLon ||
+                    (exif.getAttribute(ExifInterface.TAG_GPS_LATITUDE) != null &&
+                        exif.getAttribute(ExifInterface.TAG_GPS_LONGITUDE) != null)
+                QuickExifInfo(
+                    camera = camera,
+                    aperture = aperture,
+                    exposure = exposure,
+                    iso = iso,
+                    focalLength = focal,
+                    hasGps = hasGps,
+                    latitude = if (hasValidLatLon) latLon[0].toDouble() else null,
+                    longitude = if (hasValidLatLon) latLon[1].toDouble() else null,
+                ).also { info ->
                     synchronized(exifCache) { exifCache.put(cacheKey, info) }
                 }
             }

@@ -29,6 +29,7 @@ import com.example.core.storage.Checksums
 import com.example.core.storage.Collision
 import com.example.core.storage.DocEntry
 import com.example.core.storage.DocumentOps
+import com.example.core.storage.ExposedDocumentsStore
 import com.example.core.storage.FileTransferWorker
 import com.example.core.storage.OpEvent
 import com.example.core.storage.SearchHit
@@ -99,21 +100,41 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
     private var clip: Clip? = null
     private var opJob: Job? = null
     private var searchJob: Job? = null
+    private val exposedTrees = MutableStateFlow(
+        ExposedDocumentsStore.listExposed(app).map { it.treeUri }.toSet()
+    )
+
+    private data class PlaceSources(
+        val grants: List<FolderGrant>,
+        val favs: List<FileFavorite>,
+        val pinned: List<PinnedFolderShortcut>,
+        val exposed: Set<String>,
+    )
 
     init {
         viewModelScope.launch {
-            combine(db.folders().grants(), db.folders().favoriteFolders(), settings.flow) { grants, favs, s ->
-                Triple(grants, favs, s.pinnedFolders)
+            combine(db.folders().grants(), db.folders().favoriteFolders(), settings.flow, exposedTrees) { grants, favs, s, exposed ->
+                PlaceSources(grants, favs, s.pinnedFolders, exposed)
             }
-                .catch { emit(Triple(emptyList(), emptyList(), emptyList())) }
-                .collect { (grants, favs, pinned) ->
-                    grantsCache = grants
-                    starredList = favs
-                    pinnedCache = pinned
+                .catch { emit(PlaceSources(emptyList(), emptyList(), emptyList(), emptySet())) }
+                .collect { q ->
+                    grantsCache = q.grants
+                    starredList = q.favs
+                    pinnedCache = q.pinned
                     val places = buildList {
-                        if (favs.isNotEmpty()) add(Place("starred", "Starred (${favs.size})", Icons.Filled.Star))
-                        pinned.forEach { p -> add(Place("pin_${p.id}", p.label, Icons.Filled.Bookmark)) }
-                        grants.forEach { add(Place(it.treeUri, it.displayName, Icons.Filled.Folder)) }
+                        if (q.favs.isNotEmpty()) add(Place("starred", "Starred (${q.favs.size})", Icons.Filled.Star))
+                        q.pinned.forEach { p -> add(Place("pin_${p.id}", p.label, Icons.Filled.Bookmark)) }
+                        q.grants.forEach {
+                            add(
+                                Place(
+                                    id = it.treeUri,
+                                    label = it.displayName,
+                                    icon = Icons.Filled.Folder,
+                                    isGrant = true,
+                                    isExposedToPicker = it.treeUri in q.exposed,
+                                )
+                            )
+                        }
                         add(Place("add", "Add folder…", Icons.Filled.CreateNewFolder))
                     }
                     _ui.update { it.copy(places = places, isCurrentPinned = isCurrentLocationPinned()) }
@@ -121,6 +142,21 @@ class FilesViewModel(app: Application) : AndroidViewModel(app), FilesActions {
                     else if (tree != null && !(_ui.value.searchSubfolders && _ui.value.searchQuery.isNotBlank())) publish()
                 }
         }
+    }
+
+    override fun toggleExposeGrant(placeId: String) {
+        val grant = grantsCache.firstOrNull { it.treeUri == placeId } ?: return
+        val currentlyExposed = ExposedDocumentsStore.isExposed(ctx, grant.treeUri)
+        if (currentlyExposed) {
+            ExposedDocumentsStore.unexposeFolder(ctx, grant.treeUri)
+            _events.tryEmit(FilesEvent.Message(ctx.getString(R.string.files_unexposed_msg, grant.displayName)))
+        } else {
+            safeParseMediaUri(grant.treeUri)?.let { parsed ->
+                ExposedDocumentsStore.exposeFolder(ctx, parsed, grant.displayName)
+                _events.tryEmit(FilesEvent.Message(ctx.getString(R.string.files_exposed_msg, grant.displayName)))
+            }
+        }
+        exposedTrees.value = ExposedDocumentsStore.listExposed(ctx).map { it.treeUri }.toSet()
     }
 
     private fun isCurrentLocationPinned(): Boolean {

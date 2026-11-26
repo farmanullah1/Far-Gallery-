@@ -10,6 +10,8 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager as PlatformCameraManager
 import android.net.Uri
 import android.os.Environment
 import android.provider.MediaStore
@@ -110,6 +112,8 @@ class FarCameraManager(private val context: Context) {
         val step = info.exposureState.exposureCompensationStep.toFloat()
         val range = info.exposureState.exposureCompensationRange
         val pm = context.packageManager
+        val useFront = controller.cameraSelector == CameraSelector.DEFAULT_FRONT_CAMERA
+        val hw = probeCamera2Details(context, useFront)
         CameraCapabilities(
             lensZoomStops = stops,
             minZoom = min,
@@ -118,6 +122,11 @@ class FarCameraManager(private val context: Context) {
             exposureRange = (range.lower * step)..(range.upper * step),
             modes = listOf(CameraMode.Video, CameraMode.Photo, CameraMode.Square, CameraMode.Scan),
             hasFrontCamera = pm.hasSystemFeature(PackageManager.FEATURE_CAMERA_FRONT),
+            hardwareLevelLabel = hw.hardwareLevelLabel,
+            supportsRaw = hw.supportsRaw,
+            maxFps = hw.maxFps,
+            hasOpticalStabilization = hw.hasOpticalStabilization,
+            focalLengthsMm = hw.focalLengthsMm,
         )
     }.getOrNull()
 
@@ -438,6 +447,9 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     fun flip() {
         runCatching { manager.flip() }
         _state.update { it.copy(aeAfLocked = false) }
+        viewModelScope.launch {
+            manager.capabilities()?.let { _caps.value = it }
+        }
     }
 
     fun dismissError() = _state.update { it.copy(error = null) }
@@ -720,3 +732,60 @@ fun LevelIndicator(modifier: Modifier = Modifier) {
         )
     }
 }
+
+internal data class Camera2HardwareDetails(
+    val hardwareLevelLabel: String = "Standard",
+    val supportsRaw: Boolean = false,
+    val maxFps: Int = 30,
+    val hasOpticalStabilization: Boolean = false,
+    val focalLengthsMm: List<Float> = emptyList(),
+)
+
+internal fun mapHardwareLevelLabel(level: Int?): String = when (level) {
+    CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LEGACY -> "LEGACY"
+    CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED -> "LIMITED"
+    CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_FULL -> "FULL"
+    CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_3 -> "LEVEL_3"
+    CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_EXTERNAL -> "EXTERNAL"
+    else -> "Standard"
+}
+
+internal fun probeCamera2Details(context: Context, useFrontCamera: Boolean): Camera2HardwareDetails = runCatching {
+    val cm = context.getSystemService(Context.CAMERA_SERVICE) as? PlatformCameraManager
+        ?: return@runCatching Camera2HardwareDetails()
+    val ids = cm.cameraIdList
+    if (ids.isEmpty()) return@runCatching Camera2HardwareDetails()
+    val targetFacing = if (useFrontCamera) {
+        CameraCharacteristics.LENS_FACING_FRONT
+    } else {
+        CameraCharacteristics.LENS_FACING_BACK
+    }
+    val chosenId = ids.firstOrNull { id ->
+        runCatching {
+            cm.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING) == targetFacing
+        }.getOrDefault(false)
+    } ?: ids.first()
+    val chars = cm.getCameraCharacteristics(chosenId)
+    val levelLabel = mapHardwareLevelLabel(chars.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL))
+    val caps = chars.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
+    val supportsRaw = caps?.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_RAW) == true
+    val maxFps = chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
+        ?.maxOfOrNull { it.upper }
+        ?.coerceAtLeast(1)
+        ?: 30
+    val hasOis = chars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION)
+        ?.any { it == CameraCharacteristics.LENS_OPTICAL_STABILIZATION_MODE_ON } == true
+    val focalLengths = chars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+        ?.toList()
+        ?.filter { it > 0f }
+        ?.distinct()
+        ?: emptyList()
+    Camera2HardwareDetails(
+        hardwareLevelLabel = levelLabel,
+        supportsRaw = supportsRaw,
+        maxFps = maxFps,
+        hasOpticalStabilization = hasOis,
+        focalLengthsMm = focalLengths,
+    )
+}.getOrDefault(Camera2HardwareDetails())
+

@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.PhotoAlbum
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Security
@@ -176,6 +177,75 @@ fun MediaDetailsSheetContent(
                 style = MaterialTheme.typography.labelMedium,
                 color = if (exifInfo?.hasGps == true) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+        val coords = exifInfo?.formattedCoordinates()
+        val lat = exifInfo?.latitude
+        val lon = exifInfo?.longitude
+        var coordsCopied by remember(item.uri) { mutableStateOf(false) }
+        if (coords != null && lat != null && lon != null) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .background(semantic.elevatedSurface, RoundedCornerShape(14.dp))
+                    .border(0.75.dp, semantic.cardBorder, RoundedCornerShape(14.dp))
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Icon(Icons.Filled.LocationOn, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                    Text(
+                        stringResource(R.string.viewer_location_label, coords),
+                        style = MaterialTheme.typography.labelMedium.copy(fontFamily = MonoFont),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.testTag("details_gps_coordinates"),
+                    )
+                }
+                Text(
+                    stringResource(R.string.viewer_location_privacy_note),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(
+                        onClick = {
+                            copyPlainTextToClipboard(ctx, "Location", "$lat,$lon")
+                            coordsCopied = true
+                        },
+                        modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("details_gps_copy"),
+                    ) {
+                        Text(
+                            if (coordsCopied) stringResource(R.string.viewer_location_copied)
+                            else stringResource(R.string.viewer_location_copy)
+                        )
+                    }
+                    TextButton(
+                        onClick = {
+                            runCatching {
+                                val geoUri = Uri.parse(
+                                    String.format(
+                                        Locale.US,
+                                        "geo:%.6f,%.6f?q=%.6f,%.6f(%s)",
+                                        lat,
+                                        lon,
+                                        lat,
+                                        lon,
+                                        Uri.encode(item.title),
+                                    )
+                                )
+                                (ctx as? Activity ?: ctx).startActivity(
+                                    Intent.createChooser(Intent(Intent.ACTION_VIEW, geoUri), null)
+                                )
+                            }
+                        },
+                        modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("details_gps_maps"),
+                    ) {
+                        Text(stringResource(R.string.viewer_location_open_map))
+                    }
+                }
+            }
         }
         if (!item.isVideo && (onShareClean != null || onSaveCleanCopy != null || onExportPdf != null)) {
             FlowRow(

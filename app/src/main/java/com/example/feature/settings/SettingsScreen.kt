@@ -443,6 +443,26 @@ fun SettingsScreen(
                 TextButton(onOpenSystemDefaults, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) {
                     Text("Open system default-app settings")
                 }
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+                        .padding(12.dp)
+                        .testTag("settings_oem_limits_card"),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        stringResource(R.string.settings_oem_limits_title),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        stringResource(R.string.settings_oem_limits_body),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
         }

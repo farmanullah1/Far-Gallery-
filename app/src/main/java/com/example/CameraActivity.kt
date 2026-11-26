@@ -63,13 +63,23 @@ class CameraActivity : AppCompatActivity() {
         vm.captureRequest = request
         request?.let { req ->
             if (req.video) vm.setMode(CameraMode.Video)
-            vm.onCaptured = { uri -> IntentResults.capture(this, uri, req) }
+            vm.onCaptured = { uri ->
+                when (val res = IntentResults.capture(this, uri, req)) {
+                    is FarResult.Ok -> Unit
+                    is FarResult.Err -> {
+                        LocalDiagnostics.recordEvent(this, res.error.code, "camera_capture_result", res.error.userTitle())
+                        IntentResults.cancel(this)
+                    }
+                }
+            }
         }
         setContent {
             FarTheme(forceDarkSystemBars = true) {
                 CameraHost(
                     vm = vm,
-                    onClose = { finish() },
+                    onClose = {
+                        if (request != null) IntentResults.cancel(this) else finish()
+                    },
                     onOpenLast = ::openInGallery,
                     onEditLastScan = ::openEditInGallery,
                 )

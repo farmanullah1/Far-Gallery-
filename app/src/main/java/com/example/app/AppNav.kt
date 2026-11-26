@@ -423,8 +423,8 @@ fun FarApp(vm: AppViewModel, activity: Activity, startOnFiles: Boolean) {
             }
         }
 
-        // Update gallery filter when Search sub-tab or Favorites filter is active
-        LaunchedEffect(tab, photosSubTab, searchQuery, searchScope, dateRange, sizeFilter, selectedSearchTag, favoritesFilter, favorites, libraryRows) {
+        // Update gallery filter when Search sub-tab, Pick MIME filter, or Favorites filter is active
+        LaunchedEffect(tab, photosSubTab, searchQuery, searchScope, dateRange, sizeFilter, selectedSearchTag, favoritesFilter, favorites, libraryRows, pick) {
             when {
                 tab == FarTab.Photos && photosSubTab == PhotosSubTab.Search -> {
                     val parsed = SearchQueryParser.parse(searchQuery)
@@ -470,8 +470,13 @@ fun FarApp(vm: AppViewModel, activity: Activity, startOnFiles: Boolean) {
                         else -> null to null
                     }
                     val hasTextOrTagCriteria = parsed.textTerms.isNotEmpty() || parsed.tags.isNotEmpty() || selectedSearchTag != null
+                    val pickForcedKind = when (pick?.mediaKindHint()) {
+                        "image" -> MediaKind.Photos
+                        "video" -> MediaKind.Videos
+                        else -> null
+                    }
                     gvm.filter.value = MediaFilter(
-                        kind = when (effectiveScope) {
+                        kind = pickForcedKind ?: when (effectiveScope) {
                             SearchScope.Photos -> MediaKind.Photos
                             SearchScope.Videos -> MediaKind.Videos
                             else -> MediaKind.All
@@ -486,8 +491,13 @@ fun FarApp(vm: AppViewModel, activity: Activity, startOnFiles: Boolean) {
                     )
                 }
                 tab == FarTab.Photos && photosSubTab == PhotosSubTab.Library -> {
+                    val pickForcedKind = when (pick?.mediaKindHint()) {
+                        "image" -> MediaKind.Photos
+                        "video" -> MediaKind.Videos
+                        else -> null
+                    }
                     gvm.filter.value = MediaFilter(
-                        kind = filter.kind,
+                        kind = pickForcedKind ?: filter.kind,
                         onlyIds = if (favoritesFilter) favorites else null,
                         forceEmpty = favoritesFilter && favorites.isEmpty(),
                     )
@@ -602,6 +612,9 @@ fun FarApp(vm: AppViewModel, activity: Activity, startOnFiles: Boolean) {
                             tab == FarTab.Camera -> tab = FarTab.Photos
                         }
                     }
+                    BackHandler(enabled = pick != null && selection.isEmpty()) {
+                        IntentResults.cancel(activity)
+                    }
 
                     FarErrorBoundary(
                         faultCode = null,
@@ -646,7 +659,15 @@ fun FarApp(vm: AppViewModel, activity: Activity, startOnFiles: Boolean) {
                                                         onZoomChange = { gvm.zoom.value = it },
                                                         selection = selection,
                                                         onOpen = { m ->
-                                                            if (pick != null) gvm.toggleSelect(m.id) else {
+                                                            if (pick != null) {
+                                                                if (!pick.multiple) {
+                                                                    safeParseMediaUri(m.uri)?.let { uri ->
+                                                                        IntentResults.pick(activity, listOf(uri))
+                                                                    }
+                                                                } else {
+                                                                    gvm.toggleSelect(m.id)
+                                                                }
+                                                            } else {
                                                                 val snap = items.itemSnapshotList.items.filterIsInstance<GalleryItem.Media>()
                                                                 viewerList = snap.map {
                                                                     ViewerItem(it.id, it.uri, it.description, null, it.isVideo, it.id in favorites)
@@ -799,13 +820,23 @@ fun FarApp(vm: AppViewModel, activity: Activity, startOnFiles: Boolean) {
                                                                 onZoomChange = { gvm.zoom.value = it },
                                                                 selection = selection,
                                                                 onOpen = { m ->
-                                                                    val snap = items.itemSnapshotList.items.filterIsInstance<GalleryItem.Media>()
-                                                                    viewerList = snap.map {
-                                                                        ViewerItem(it.id, it.uri, it.description, null, it.isVideo, it.id in favorites)
+                                                                    if (pick != null) {
+                                                                        if (!pick.multiple) {
+                                                                            safeParseMediaUri(m.uri)?.let { uri ->
+                                                                                IntentResults.pick(activity, listOf(uri))
+                                                                            }
+                                                                        } else {
+                                                                            gvm.toggleSelect(m.id)
+                                                                        }
+                                                                    } else {
+                                                                        val snap = items.itemSnapshotList.items.filterIsInstance<GalleryItem.Media>()
+                                                                        viewerList = snap.map {
+                                                                            ViewerItem(it.id, it.uri, it.description, null, it.isVideo, it.id in favorites)
+                                                                        }
+                                                                        viewerIndex = snap.indexOfFirst { it.id == m.id }.coerceAtLeast(0)
+                                                                        if (searchQuery.isNotBlank()) gvm.addSearchHistory(searchQuery)
+                                                                        nav.navigate("viewer")
                                                                     }
-                                                                    viewerIndex = snap.indexOfFirst { it.id == m.id }.coerceAtLeast(0)
-                                                                    if (searchQuery.isNotBlank()) gvm.addSearchHistory(searchQuery)
-                                                                    nav.navigate("viewer")
                                                                 },
                                                                 onToggleSelect = { gvm.toggleSelect(it.id) },
                                                                 onToggleGroupSelect = { groupIds ->
@@ -873,6 +904,38 @@ fun FarApp(vm: AppViewModel, activity: Activity, startOnFiles: Boolean) {
                                                     nav.navigate("viewer")
                                                 },
                                             )
+                                        }
+                                    }
+
+                                    if (pick != null && selection.isEmpty()) {
+                                        Row(
+                                            Modifier
+                                                .align(Alignment.BottomCenter)
+                                                .navigationBarsPadding()
+                                                .padding(horizontal = FarSpacing.screenPadding, vertical = if (wide) 16.dp else 82.dp)
+                                                .glass(activeGlass, RoundedCornerShape(24.dp), GlassKind.Bar)
+                                                .border(0.75.dp, semantic.cardBorder, RoundedCornerShape(24.dp))
+                                                .padding(horizontal = 14.dp, vertical = 6.dp)
+                                                .testTag("picker_banner"),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                        ) {
+                                            Text(
+                                                text = if (pick.multiple) {
+                                                    stringResource(R.string.picker_choose_multi, pick.maxItems)
+                                                } else {
+                                                    stringResource(R.string.picker_choose_single)
+                                                },
+                                                style = MaterialTheme.typography.labelLarge,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                modifier = Modifier.weight(1f, fill = false),
+                                            )
+                                            TextButton(
+                                                onClick = { IntentResults.cancel(activity) },
+                                                modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("picker_cancel_button"),
+                                            ) {
+                                                Text(stringResource(R.string.action_cancel), color = MaterialTheme.colorScheme.error)
+                                            }
                                         }
                                     }
 
@@ -1589,6 +1652,26 @@ fun FarApp(vm: AppViewModel, activity: Activity, startOnFiles: Boolean) {
                                 toast = ctx.getString(R.string.editor_edits_copied)
                             },
                             onPasteRecipe = { copiedEditRecipe },
+                            onSaveSplit = { st, stripExif ->
+                                val targetUri = parsedUri ?: return@EditorScreen
+                                val b = bmp ?: return@EditorScreen
+                                saving = true
+                                scope.launch {
+                                    when (val res = EditorEngine.saveBeforeAfterSplitCopy(ctx, targetUri, b, st, 94, stripExif)) {
+                                        is FarResult.Ok -> {
+                                            saving = false
+                                            toast = ctx.getString(R.string.editor_split_saved)
+                                            gvm.refreshAll()
+                                            items.refresh()
+                                        }
+                                        is FarResult.Err -> {
+                                            saving = false
+                                            LocalDiagnostics.recordEvent(ctx, res.error.code, "editor_save_split", res.error.userTitle())
+                                            toast = "Couldn't save (${res.error.code}). Original is untouched."
+                                        }
+                                    }
+                                }
+                            },
                             onSave = { st, stripExif ->
                                 val targetUri = parsedUri ?: return@EditorScreen
                                 val b = bmp ?: return@EditorScreen

@@ -129,6 +129,8 @@ data class Place(
     val icon: ImageVector,
     val usedFraction: Float? = null,
     val available: Boolean = true,
+    val isGrant: Boolean = false,
+    val isExposedToPicker: Boolean = false,
 )
 
 enum class SortColumn { Name, Size, Type, Modified }
@@ -174,6 +176,7 @@ interface FilesActions {
     fun toggleSearchSubfolders() {}
     fun togglePinCurrent() {}
     fun refresh() {}
+    fun toggleExposeGrant(placeId: String) {}
 }
 
 /** Phone = Apple Files (Locations + push navigation). >= 840dp = Ubuntu Files (sidebar + path bar + columns). */
@@ -215,7 +218,13 @@ private fun PhoneLayout(state: FilesUiState, a: FilesActions, glass: FarGlassSta
                         modifier = Modifier.padding(vertical = 8.dp),
                     )
                 }
-                items(state.places, key = { it.id }) { p -> PlaceRow(p) { a.openPlace(p.id) } }
+                items(state.places, key = { it.id }) { p ->
+                    PlaceRow(
+                        p = p,
+                        onToggleExpose = if (p.isGrant) { { a.toggleExposeGrant(p.id) } } else null,
+                        onClick = { a.openPlace(p.id) },
+                    )
+                }
                 if (state.places.none { it.id != "add" && it.id != "starred" && !it.id.startsWith("pin_") }) {
                     item(key = "locations_empty") {
                         EmptyState(
@@ -524,7 +533,19 @@ private fun DesktopLayout(state: FilesUiState, a: FilesActions, glass: FarGlassS
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
                     )
+                    if (p.isGrant) {
+                        TextButton(
+                            onClick = { a.toggleExposeGrant(p.id) },
+                            modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("desktop_place_expose_${p.id}"),
+                        ) {
+                            Text(
+                                text = stringResource(if (p.isExposedToPicker) R.string.files_exposed_label else R.string.files_expose_label),
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -853,7 +874,7 @@ private fun FileIcon(e: FileEntry, size: androidx.compose.ui.unit.Dp = 28.dp) {
 }
 
 @Composable
-private fun PlaceRow(p: Place, onClick: () -> Unit) {
+private fun PlaceRow(p: Place, onToggleExpose: (() -> Unit)? = null, onClick: () -> Unit) {
     val semantic = LocalSemanticColors.current
     Row(
         Modifier
@@ -863,10 +884,10 @@ private fun PlaceRow(p: Place, onClick: () -> Unit) {
             .background(semantic.elevatedSurface)
             .border(0.75.dp, semantic.cardBorder, RoundedCornerShape(16.dp))
             .clickable(enabled = p.available, onClick = onClick)
-            .padding(14.dp)
+            .padding(horizontal = 14.dp, vertical = 10.dp)
             .testTag("place_${p.id}"),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Icon(p.icon, null, Modifier.size(28.dp), tint = if (p.available) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
         Column(Modifier.weight(1f)) {
@@ -875,7 +896,22 @@ private fun PlaceRow(p: Place, onClick: () -> Unit) {
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurface,
             )
+            if (p.isGrant && p.isExposedToPicker) {
+                Text(
+                    stringResource(R.string.files_exposed_hint),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
             p.usedFraction?.let { LinearProgressIndicator(progress = { it }, Modifier.fillMaxWidth().padding(top = 6.dp)) }
+        }
+        if (onToggleExpose != null) {
+            FarFilterPill(
+                label = stringResource(if (p.isExposedToPicker) R.string.files_exposed_label else R.string.files_expose_label),
+                selected = p.isExposedToPicker,
+                onClick = onToggleExpose,
+                modifier = Modifier.testTag("place_expose_${p.id}"),
+            )
         }
         Icon(Icons.Filled.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }

@@ -454,6 +454,112 @@ object EditorEngine {
             out
         }
     }
+
+    fun renderBeforeAfterSplit(src: Bitmap, s: EditState): Bitmap {
+        val beforeBmp = renderGeometryOnly(src, s, applyCrop = true)
+        val afterBmp = render(src, s)
+        val w = afterBmp.width.coerceAtLeast(2)
+        val h = afterBmp.height.coerceAtLeast(1)
+        val result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(result)
+        val splitX = w / 2
+        val rightWidth = (w - splitX).coerceAtLeast(1)
+
+        val beforeSlice = Bitmap.createBitmap(beforeBmp, 0, 0, splitX.coerceAtLeast(1), h)
+        val afterSlice = Bitmap.createBitmap(afterBmp, splitX, 0, rightWidth, h)
+        canvas.drawBitmap(beforeSlice, 0f, 0f, null)
+        canvas.drawBitmap(afterSlice, splitX.toFloat(), 0f, null)
+        beforeSlice.recycle()
+        afterSlice.recycle()
+
+        val dividerWidth = max(2f, w * 0.004f)
+        val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.argb(140, 0, 0, 0)
+            strokeWidth = dividerWidth + 2f
+        }
+        val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.WHITE
+            strokeWidth = dividerWidth
+        }
+        canvas.drawLine(splitX.toFloat(), 0f, splitX.toFloat(), h.toFloat(), shadowPaint)
+        canvas.drawLine(splitX.toFloat(), 0f, splitX.toFloat(), h.toFloat(), linePaint)
+
+        if (beforeBmp !== src && beforeBmp !== afterBmp) beforeBmp.recycle()
+        if (afterBmp !== src) afterBmp.recycle()
+        return result
+    }
+
+    /** Save an EXIF-stripped Before/After split JPEG to Pictures/Far Gallery. Never modifies original. */
+    suspend fun saveBeforeAfterSplitCopy(
+        ctx: Context,
+        sourceUri: Uri?,
+        fallbackPreview: Bitmap,
+        s: EditState,
+        quality: Int = 94,
+        stripExif: Boolean = true,
+    ): FarResult<Uri> = withContext(Dispatchers.IO) {
+        farCatching {
+            val hiRes = sourceUri?.let { (load(ctx, it, 4096) as? FarResult.Ok)?.value }
+            val srcToRender = hiRes ?: fallbackPreview
+            val bmp = renderBeforeAfterSplit(srcToRender, s)
+            if (hiRes != null && hiRes !== fallbackPreview) hiRes.recycle()
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, "SPLIT_${System.currentTimeMillis()}.jpg")
+                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Far Gallery")
+                put(MediaStore.Images.Media.IS_PENDING, 1)
+            }
+            val r = ctx.contentResolver
+            val out = r.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: throw java.io.IOException("insert failed")
+            try {
+                val outStream = r.openOutputStream(out) ?: throw java.io.IOException("output stream unavailable")
+                outStream.use {
+                    if (!bmp.compress(Bitmap.CompressFormat.JPEG, quality, it)) throw java.io.IOException("encode failed")
+                }
+                if (!stripExif && sourceUri != null) {
+                    runCatching {
+                        val srcExif = r.openInputStream(sourceUri)?.use { ExifInterface(it) }
+                        r.openFileDescriptor(out, "rw")?.use { pfd ->
+                            val dstExif = ExifInterface(pfd.fileDescriptor)
+                            listOf(
+                                ExifInterface.TAG_MAKE,
+                                ExifInterface.TAG_MODEL,
+                                ExifInterface.TAG_F_NUMBER,
+                                ExifInterface.TAG_EXPOSURE_TIME,
+                                ExifInterface.TAG_FOCAL_LENGTH,
+                                ExifInterface.TAG_DATETIME_ORIGINAL,
+                            ).forEach { tag ->
+                                srcExif?.getAttribute(tag)?.let { v -> dstExif.setAttribute(tag, v) }
+                            }
+                            dstExif.saveAttributes()
+                        }
+                    }
+                }
+                r.update(out, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null)
+            } catch (e: Exception) {
+                r.delete(out, null, null)
+                throw e
+            } finally {
+                bmp.recycle()
+            }
+            out
+        }
+    }
+}
+
+internal fun centeredNormalizedCrop(imgW: Int, imgH: Int, targetAspect: Float): FloatArray {
+    val safeW = imgW.coerceAtLeast(1)
+    val safeH = imgH.coerceAtLeast(1)
+    val safeAspect = targetAspect.coerceAtLeast(0.05f)
+    val imgAspect = safeW.toFloat() / safeH.toFloat()
+    val (nw, nh) = if (imgAspect > safeAspect) {
+        (safeAspect / imgAspect).coerceIn(0.1f, 1f) to 1f
+    } else {
+        1f to (imgAspect / safeAspect).coerceIn(0.1f, 1f)
+    }
+    val dx = (1f - nw) / 2f
+    val dy = (1f - nh) / 2f
+    return floatArrayOf(dx, dy, 1f - dx, 1f - dy)
 }
 
 enum class EditTab(val labelRes: Int) {
@@ -478,6 +584,7 @@ fun EditorScreen(
     copiedRecipe: EditState? = null,
     onCopyRecipe: ((EditState) -> Unit)? = null,
     onPasteRecipe: (() -> EditState?)? = null,
+    onSaveSplit: ((EditState, Boolean) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val history = remember(initialState) { EditHistory(initialState ?: EditState()) }
@@ -804,6 +911,8 @@ fun EditorScreen(
                                 Triple(4f / 3f, null, "4:3"),
                                 Triple(1.5f, null, "3:2"),
                                 Triple(16f / 9f, null, "16:9"),
+                                Triple(35f / 45f, R.string.editor_crop_passport, ""),
+                                Triple(9f / 16f, R.string.editor_crop_wallpaper, ""),
                             )
                             items(ratios.size) { idx ->
                                 val (r, res, fixedLabel) = ratios[idx]
@@ -814,29 +923,23 @@ fun EditorScreen(
                                         if (r == null) {
                                             history.commit(s.copy(cropRatio = null, cropLeft = 0f, cropTop = 0f, cropRight = 1f, cropBottom = 1f))
                                         } else {
-                                            // Compute centered normalized crop box matching ratio r relative to oriented source
                                             val orientedW = if (s.rotationQuarter % 2 == 1) (source?.height ?: 1) else (source?.width ?: 1)
                                             val orientedH = if (s.rotationQuarter % 2 == 1) (source?.width ?: 1) else (source?.height ?: 1)
-                                            val imgAspect = orientedW.toFloat() / orientedH.coerceAtLeast(1).toFloat()
-                                            val (nw, nh) = if (imgAspect > r) {
-                                                (r / imgAspect).coerceIn(0.1f, 1f) to 1f
-                                            } else {
-                                                1f to (imgAspect / r).coerceIn(0.1f, 1f)
-                                            }
-                                            val dx = (1f - nw) / 2f
-                                            val dy = (1f - nh) / 2f
+                                            val box = centeredNormalizedCrop(orientedW, orientedH, r)
                                             history.commit(
                                                 s.copy(
                                                     cropRatio = r,
-                                                    cropLeft = dx,
-                                                    cropTop = dy,
-                                                    cropRight = 1f - dx,
-                                                    cropBottom = 1f - dy,
+                                                    cropLeft = box[0],
+                                                    cropTop = box[1],
+                                                    cropRight = box[2],
+                                                    cropBottom = box[3],
                                                 )
                                             )
                                         }
                                     },
-                                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                                    modifier = Modifier
+                                        .defaultMinSize(minHeight = 48.dp)
+                                        .testTag("editor_crop_ratio_$idx"),
                                 ) {
                                     Text(label, color = if (s.cropRatio == r) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
                                 }
@@ -894,6 +997,19 @@ fun EditorScreen(
                                 selected = false,
                                 onClick = { onCopyRecipe(s) },
                                 modifier = Modifier.testTag("editor_copy_recipe_chip"),
+                            )
+                        }
+                    }
+                    if (dirty && !saving && onSaveSplit != null) {
+                        item(key = "save_split") {
+                            FarFilterPill(
+                                label = stringResource(R.string.editor_save_split),
+                                selected = false,
+                                onClick = {
+                                    if (hapticsOn) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    onSaveSplit(s, stripExif)
+                                },
+                                modifier = Modifier.testTag("editor_save_split_chip"),
                             )
                         }
                     }
