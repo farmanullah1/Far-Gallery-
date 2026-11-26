@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+GRADLE_BIN="/c/Users/farma/.gradle/wrapper/dists/gradle-9.3.1-bin/23ovyewtku6u96viwx3xl3oks/gradle-9.3.1/bin/gradle"
+exec "$GRADLE_BIN" "$@"

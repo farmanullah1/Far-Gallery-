@@ -16,3 +16,12 @@
 local.properties
 .env
 debug.keystore
+
+# Agent/coding-workspace tooling metadata (local only)
+.agents/
+.claude/
+
+# Auto-generated or assistant-provided bulk content (ignore locally, decide on commit)
+skills-lock.json
+APP_OVERVIEW.md
+FAR_GALLERY_ULTIMATE_MASTER_PROMPT_PACK_V3.md
