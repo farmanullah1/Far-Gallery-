@@ -22,14 +22,20 @@ import com.example.feature.editor.EditorEngine
 import com.example.feature.editor.PdfExporter
 import com.example.feature.editor.centeredNormalizedCrop
 import com.example.feature.editor.matrixValues
+import com.example.core.common.FarResult
+import com.example.core.common.LocalDiagnostics
+import com.example.core.media.MediaRow
 import com.example.core.storage.ExposedDocumentsStore
 import com.example.core.storage.FarDocumentsProvider
 import com.example.app.IncomingRoute
 import com.example.app.IntentResults
 import com.example.app.IntentRouter
+import com.example.feature.duplicates.BlurDetector
+import com.example.feature.duplicates.BurstDetector
 import com.example.feature.files.detectBinarySignature
 import com.example.feature.files.filterTextLines
 import com.example.feature.files.formatHexDump
+import com.example.feature.storage.StorageAnalyzer
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.ProviderInfo
@@ -48,6 +54,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.ByteArrayOutputStream
+import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -362,5 +369,87 @@ class RoadmapUpgradesTest {
         val cancelAct = Robolectric.buildActivity(Activity::class.java).create().get()
         IntentResults.cancel(cancelAct)
         assertEquals(Activity.RESULT_CANCELED, org.robolectric.Shadows.shadowOf(cancelAct).resultCode)
+    }
+
+    @Test
+    fun blurDetector_distinguishesFlatBlurredImageFromSharpEdgeImage() {
+        val w = 24
+        val h = 24
+        val flat = FloatArray(w * h) { 128f }
+        val sharp = FloatArray(w * h) { idx ->
+            val x = idx % w
+            val y = idx / w
+            if ((x + y) % 2 == 0) 255f else 0f
+        }
+        val flatScore = BlurDetector.laplacianVariance(flat, w, h)
+        val sharpScore = BlurDetector.laplacianVariance(sharp, w, h)
+        assertEquals(0.0, flatScore, 0.001)
+        assertTrue(sharpScore > BlurDetector.DEFAULT_BLUR_THRESHOLD)
+
+        val flatBmp = Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.GRAY) }
+        val sharpBmp = Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888)
+        for (y in 0 until 16) {
+            for (x in 0 until 16) {
+                sharpBmp.setPixel(x, y, if ((x + y) % 2 == 0) Color.WHITE else Color.BLACK)
+            }
+        }
+        assertTrue(BlurDetector.scoreBitmap(flatBmp) < BlurDetector.DEFAULT_BLUR_THRESHOLD)
+        assertTrue(BlurDetector.scoreBitmap(sharpBmp) > BlurDetector.DEFAULT_BLUR_THRESHOLD)
+        flatBmp.recycle()
+        sharpBmp.recycle()
+    }
+
+    @Test
+    fun burstDetector_groupsRapidShotsAndSuggestsBestFrame() {
+        val rows = listOf(
+            MediaRow(1L, Uri.parse("content://media/1"), "IMG_1.jpg", "image/jpeg", false, 1_500_000L, 10_000L, 0L, 1920, 1080, "DCIM/Camera/"),
+            MediaRow(2L, Uri.parse("content://media/2"), "IMG_2.jpg", "image/jpeg", false, 3_200_000L, 12_000L, 0L, 4000, 3000, "DCIM/Camera/"),
+            MediaRow(3L, Uri.parse("content://media/3"), "IMG_3.jpg", "image/jpeg", false, 2_100_000L, 14_000L, 0L, 4000, 3000, "DCIM/Camera/"),
+            MediaRow(4L, Uri.parse("content://media/4"), "IMG_4.jpg", "image/jpeg", false, 2_500_000L, 60_000L, 0L, 4000, 3000, "DCIM/Camera/"),
+        )
+        val bursts = BurstDetector.findBursts(rows, favorites = emptySet(), inAlbums = emptySet())
+        assertEquals(1, bursts.size)
+        assertEquals(3, bursts.first().items.size)
+        assertEquals(2L, bursts.first().bestFrameId)
+    }
+
+    @Test
+    fun storageAnalyzer_computesFolderTreemapAndTidySuggestions() {
+        val now = 1_700_000_000_000L
+        val fortyDaysAgo = now - (40L * 24L * 60L * 60L * 1000L)
+        val rows = listOf(
+            MediaRow(10L, Uri.parse("content://media/10"), "shot_old.png", "image/png", false, 2_000_000L, fortyDaysAgo, 0L, 1080, 2400, "Pictures/Screenshots/"),
+            MediaRow(11L, Uri.parse("content://media/11"), "vid_big.mp4", "video/mp4", true, 55L * 1024L * 1024L, now - 1000L, 20_000L, 1920, 1080, "DCIM/Camera/"),
+            MediaRow(12L, Uri.parse("content://media/12"), "cam.jpg", "image/jpeg", false, 4_000_000L, now - 500L, 0L, 4000, 3000, "DCIM/Camera/"),
+        )
+        val summary = StorageAnalyzer.summarize(rows, minLargeBytes = 10L * 1024L * 1024L, nowMs = now)
+        assertEquals(2, summary.folderSlices.size)
+        assertEquals("DCIM/Camera", summary.folderSlices.first().folderName)
+        assertEquals(2, summary.suggestions.size)
+        val oldShots = summary.suggestions.first { it.id == "old_shots" }
+        assertTrue(10L in oldShots.itemIds)
+        val bigVids = summary.suggestions.first { it.id == "large_videos" }
+        assertTrue(11L in bigVids.itemIds)
+    }
+
+    @Test
+    fun localDiagnostics_exportToDownloadsWritesSanitizedReportLocally() {
+        val app = ApplicationProvider.getApplicationContext<android.app.Application>()
+        LocalDiagnostics.clearAll(app)
+        LocalDiagnostics.recordEvent(app, "FG-TEST", "smoke_area", "sanitized_code_only")
+        val report = LocalDiagnostics.buildReport(app)
+        assertTrue(report.contains("zero PII"))
+        assertTrue(report.contains("FG-TEST|smoke_area|sanitized_code_only"))
+
+        val exportRes = LocalDiagnostics.exportToDownloads(app)
+        assertTrue(exportRes is FarResult.Ok)
+        val exported = (exportRes as FarResult.Ok).value
+        assertTrue(exported.contains("far_diagnostics_"))
+        if (exported.startsWith("/")) {
+            val f = File(exported)
+            assertTrue(f.exists())
+            assertTrue(f.readText().contains("FG-TEST"))
+        }
+        LocalDiagnostics.clearAll(app)
     }
 }

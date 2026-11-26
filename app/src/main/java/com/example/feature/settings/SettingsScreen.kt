@@ -20,12 +20,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
@@ -37,6 +40,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -65,9 +69,13 @@ import com.example.app.DefaultApps
 import com.example.app.DefaultRole
 import com.example.app.DefaultStatus
 import com.example.app.copyPlainTextToClipboard
+import com.example.core.common.FarResult
 import com.example.core.common.LocalDiagnostics
 import com.example.core.database.OperationRecord
 import com.example.core.database.QuarantineItemEntity
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.example.feature.albums.AlbumSort
 import com.example.ui.components.FarFilterPill
 import com.example.ui.components.FarTopBar
@@ -304,9 +312,11 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
 ) {
     val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
     val semantic = LocalSemanticColors.current
     var diagRefresh by remember { mutableIntStateOf(0) }
     var diagStatus by remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+    var diagPreviewText by remember { mutableStateOf<String?>(null) }
     var settingsQuery by remember { mutableStateOf("") }
     val lastCrash = remember(diagRefresh) { LocalDiagnostics.readLastCrash(ctx) }
     val diagEvents = remember(diagRefresh) { LocalDiagnostics.readEvents(ctx) }
@@ -671,7 +681,11 @@ fun SettingsScreen(
                 }
                 val copiedLabel = stringResource(R.string.diagnostics_copied)
                 val clearedLabel = stringResource(R.string.diagnostics_cleared)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(
+                        onClick = { diagPreviewText = LocalDiagnostics.buildReport(ctx) },
+                        modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("settings_preview_diagnostics"),
+                    ) { Text(stringResource(R.string.diagnostics_preview)) }
                     TextButton(
                         onClick = {
                             copyPlainTextToClipboard(ctx, "Far Diagnostics", LocalDiagnostics.buildReport(ctx))
@@ -748,6 +762,52 @@ fun SettingsScreen(
         }
         }
         }
+    }
+
+    diagPreviewText?.let { previewBody ->
+        val savedMsg = stringResource(R.string.diagnostics_saved_local)
+        val saveFailedMsg = stringResource(R.string.diagnostics_save_failed)
+        AlertDialog(
+            onDismissRequest = { diagPreviewText = null },
+            modifier = Modifier.testTag("diagnostics_preview_dialog"),
+            title = { Text(stringResource(R.string.diagnostics_preview_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        stringResource(R.string.diagnostics_preview_note),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = semantic.success,
+                    )
+                    Text(
+                        previewBody,
+                        style = MaterialTheme.typography.labelMedium.copy(fontFamily = MonoFont),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .defaultMinSize(minHeight = 80.dp)
+                            .verticalScroll(rememberScrollState()),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        scope.launch {
+                            val res = withContext(Dispatchers.IO) { LocalDiagnostics.exportToDownloads(ctx) }
+                            diagStatus = if (res is FarResult.Ok) savedMsg else saveFailedMsg
+                            diagPreviewText = null
+                        }
+                    },
+                    modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("diagnostics_save_local_button"),
+                ) { Text(stringResource(R.string.diagnostics_save_local)) }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { diagPreviewText = null },
+                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                ) { Text(stringResource(R.string.action_close)) }
+            },
+        )
     }
 }
 

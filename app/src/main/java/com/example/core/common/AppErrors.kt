@@ -2,9 +2,12 @@ package com.example.core.common
 
 import android.content.ClipData
 import android.content.ContentResolver
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Environment
+import android.provider.MediaStore
 import android.provider.OpenableColumns
 import androidx.core.content.IntentCompat
 import java.io.File
@@ -120,6 +123,33 @@ object LocalDiagnostics {
             events.forEach { appendLine(" - $it") }
         }
     }.trim()
+
+    /** Saves the sanitized report strictly locally into Downloads/Far Gallery (never uploaded). */
+    fun exportToDownloads(ctx: Context): FarResult<String> = farCatching {
+        val reportText = buildReport(ctx)
+        val fileName = "far_diagnostics_${System.currentTimeMillis()}.txt"
+        val resolver = ctx.contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+            put(MediaStore.Downloads.MIME_TYPE, "text/plain")
+            put(MediaStore.Downloads.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/Far Gallery")
+            put(MediaStore.Downloads.IS_PENDING, 1)
+        }
+        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+        if (uri != null) {
+            resolver.openOutputStream(uri)?.use { out ->
+                out.write(reportText.toByteArray(Charsets.UTF_8))
+                out.flush()
+            } ?: throw IOException("Unable to open diagnostics output stream")
+            resolver.update(uri, ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null)
+            fileName
+        } else {
+            val fallbackDir = File(ctx.filesDir, "diagnostics_exports").apply { mkdirs() }
+            val outFile = File(fallbackDir, fileName)
+            outFile.writeText(reportText, Charsets.UTF_8)
+            outFile.absolutePath
+        }
+    }
 }
 
 fun FarError.userTitle(): String = when (this) {

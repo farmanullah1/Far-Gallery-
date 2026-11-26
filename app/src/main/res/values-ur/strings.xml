@@ -530,4 +530,30 @@
     <string name="picker_choose_multi">واپس بھیجنے کے لیے %1$d تک آئٹمز منتخب کریں</string>
     <string name="settings_oem_limits_title">سسٹم اور OEM ہارڈویئر کی حدود</string>
     <string name="settings_oem_limits_body">اینڈرائیڈ میں کوئی یونیورسل سسٹم گیلری رول نہیں ہے۔ لاک اسکرین کیمرہ لانچ، پاور بٹن ڈبل پریس اور مخصوص کیمرہ بٹن ڈیوائس بنانے والے اور OS کے کنٹرول میں ہوتے ہیں اور تھرڈ پارٹی ایپس انہیں تبدیل نہیں کر سکتیں۔ Far Camera یا Far Gallery کھلے ہونے پر والیوم بٹن شٹر کے طور پر کام کرتے ہیں۔</string>
+
+    <!-- Blur/Burst Review (P23), Storage Treemap (P36) & Sanitized Diagnostics Preview (P47) -->
+    <string name="dup_tab_exact">یکساں کاپیاں</string>
+    <string name="dup_tab_bursts">برسٹ سیریز</string>
+    <string name="dup_tab_blurry">دھندلی تصاویر</string>
+    <string name="dup_blurry_scanning">تصویر کی واضحیت جانچی جا رہی ہے (%1$d از %2$d)…</string>
+    <string name="dup_blurry_summary">%1$d دھندلی تصاویر · %2$s خالی کی جا سکتی ہے</string>
+    <string name="dup_blurry_score">واضحیت %1$.0f · کم تفصیل</string>
+    <string name="dup_blurry_empty_title">کوئی دھندلی تصویر نہیں ملی</string>
+    <string name="dup_blurry_empty_body">جانچی گئی تصاویر واضح ہیں۔ پسندیدہ اور البم تصاویر محفوظ رہتی ہیں۔</string>
+    <string name="dup_burst_count">%1$d فریمز · بہترین فریم تجویز کردہ</string>
+    <string name="dup_burst_best">بہترین فریم</string>
+    <string name="dup_burst_empty_title">کوئی برسٹ سیریز نہیں</string>
+    <string name="dup_burst_empty_body">چند سیکنڈز میں لگاتار لی گئی تصاویر یہاں جمع ہوں گی۔</string>
+    <string name="storage_treemap_title">فولڈر ٹری میپ</string>
+    <string name="storage_cleanup_suggestions">صفائی کی تجاویز</string>
+    <string name="storage_cleanup_old_shots">پرانے اسکرین شاٹس (30 دن+)</string>
+    <string name="storage_cleanup_large_videos">بڑی ویڈیوز (25 MB+)</string>
+    <string name="storage_cleanup_reclaimable">خالی ہونے والی جگہ: %1$s</string>
+    <string name="storage_private_cache_note">اینڈرائیڈ دیگر ایپس کا نجی کیش الگ رکھتا ہے؛ یہاں صرف اپنی فائلیں دیکھ کر ٹریش کریں۔</string>
+    <string name="diagnostics_preview">پیش نظارہ اور محفوظ</string>
+    <string name="diagnostics_preview_title">محفوظ تشخیصی پیش نظارہ</string>
+    <string name="diagnostics_preview_note">صرف مقامی — کوئی فائل نام، URI، GPS، OCR متن یا والٹ ڈیٹا شامل نہیں۔</string>
+    <string name="diagnostics_save_local">فائل محفوظ کریں (.txt)</string>
+    <string name="diagnostics_saved_local">تشخیصی رپورٹ Downloads/Far Gallery میں محفوظ ہو گئی</string>
+    <string name="diagnostics_save_failed">تشخیصی فائل محفوظ نہ ہو سکی</string>
 </resources>

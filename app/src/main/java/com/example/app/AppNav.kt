@@ -102,6 +102,10 @@ import com.example.feature.albums.SearchScreen
 import com.example.feature.albums.SizeFilter
 import com.example.feature.albums.SystemCollection
 import com.example.feature.camera.CameraViewModel
+import com.example.feature.duplicates.BlurCandidate
+import com.example.feature.duplicates.BlurDetector
+import com.example.feature.duplicates.BlurScan
+import com.example.feature.duplicates.BurstDetector
 import com.example.feature.duplicates.DupGroup
 import com.example.feature.duplicates.DupScan
 import com.example.feature.duplicates.DuplicateFinder
@@ -1328,7 +1332,13 @@ fun FarApp(vm: AppViewModel, activity: Activity, startOnFiles: Boolean) {
                     ) {
                         var scanning by remember { mutableStateOf<DupScan.Progress?>(DupScan.Progress(0, 0)) }
                         var groups by remember { mutableStateOf<List<DupGroup>>(emptyList()) }
+                        var blurScanRequested by remember { mutableStateOf(false) }
+                        var blurScanning by remember { mutableStateOf<BlurScan.Progress?>(null) }
+                        var blurryItems by remember { mutableStateOf<List<BlurCandidate>>(emptyList()) }
                         val inAlbumIds = remember(albumRefs) { albumRefs.map { it.mediaId }.toSet() }
+                        val burstGroups = remember(libraryRows, favorites, inAlbumIds) {
+                            BurstDetector.findBursts(libraryRows, favorites, inAlbumIds)
+                        }
                         LaunchedEffect(libraryRows, favorites, inAlbumIds) {
                             DuplicateFinder(ctx.contentResolver).scan(libraryRows, favorites, inAlbumIds).collect { ev ->
                                 when (ev) {
@@ -1340,11 +1350,42 @@ fun FarApp(vm: AppViewModel, activity: Activity, startOnFiles: Boolean) {
                                 }
                             }
                         }
+                        LaunchedEffect(blurScanRequested, libraryRows, favorites, inAlbumIds) {
+                            if (blurScanRequested) {
+                                BlurDetector.scanPhotos(ctx.contentResolver, libraryRows, favorites, inAlbumIds).collect { ev ->
+                                    when (ev) {
+                                        is BlurScan.Progress -> blurScanning = ev
+                                        is BlurScan.Done -> {
+                                            blurScanning = null
+                                            blurryItems = ev.blurry
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         DuplicatesScreen(
                             scanning = scanning,
                             groups = groups,
                             onBack = { nav.popBackStack() },
                             onTrash = { trash(it) },
+                            blurScanning = blurScanning,
+                            blurryItems = blurryItems,
+                            burstGroups = burstGroups,
+                            onStartBlurScan = { blurScanRequested = true },
+                            onPreview = { row ->
+                                viewerList = listOf(
+                                    ViewerItem(
+                                        id = row.id,
+                                        uri = row.uri.toString(),
+                                        title = row.name,
+                                        subtitle = null,
+                                        isVideo = row.isVideo,
+                                        isFavorite = row.id in favorites,
+                                    )
+                                )
+                                viewerIndex = 0
+                                nav.navigate("viewer")
+                            },
                         )
                     }
                 }

@@ -11,11 +11,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -27,8 +29,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
@@ -86,14 +86,35 @@ data class StorageBucket(
 )
 
 @Immutable
+data class FolderStorageSlice(
+    val folderName: String,
+    val bytes: Long,
+    val count: Int,
+    val color: Color,
+)
+
+@Immutable
+data class CleanupSuggestion(
+    val id: String,
+    val labelRes: Int,
+    val bytes: Long,
+    val itemIds: Set<Long>,
+)
+
+@Immutable
 data class StorageSummary(
     val totalBytes: Long,
     val totalCount: Int,
     val buckets: List<StorageBucket>,
     val largeFiles: List<MediaRow>,
+    val folderSlices: List<FolderStorageSlice> = emptyList(),
+    val suggestions: List<CleanupSuggestion> = emptyList(),
 )
 
 object StorageAnalyzer {
+    private const val THIRTY_DAYS_MS = 30L * 24L * 60L * 60L * 1000L
+    private const val LARGE_VIDEO_BYTES = 25L * 1024L * 1024L
+
     fun categoryOf(row: MediaRow): StorageCategoryFilter = when {
         row.isVideo -> StorageCategoryFilter.Videos
         row.relativePath?.contains("Screenshots", ignoreCase = true) == true -> StorageCategoryFilter.Screenshots
@@ -105,6 +126,7 @@ object StorageAnalyzer {
         rows: List<MediaRow>,
         minLargeBytes: Long = 10L * 1024 * 1024,
         categoryFilter: StorageCategoryFilter = StorageCategoryFilter.All,
+        nowMs: Long = System.currentTimeMillis(),
     ): StorageSummary {
         var videoBytes = 0L
         var videoCount = 0
@@ -114,6 +136,12 @@ object StorageAnalyzer {
         var shotCount = 0
         var otherBytes = 0L
         var otherCount = 0
+
+        val folderAccum = LinkedHashMap<String, Pair<Long, Int>>()
+        val oldShotIds = LinkedHashSet<Long>()
+        var oldShotBytes = 0L
+        val largeVideoIds = LinkedHashSet<Long>()
+        var largeVideoBytes = 0L
 
         for (r in rows) {
             val sz = r.sizeBytes.coerceAtLeast(0L)
@@ -135,6 +163,18 @@ object StorageAnalyzer {
                     otherCount++
                 }
             }
+            val folderKey = r.relativePath?.trimEnd('/')?.ifBlank { "Root" } ?: "Media"
+            val prev = folderAccum[folderKey]
+            folderAccum[folderKey] = ((prev?.first ?: 0L) + sz) to ((prev?.second ?: 0) + 1)
+
+            if (categoryOf(r) == StorageCategoryFilter.Screenshots && r.takenMs > 0L && (nowMs - r.takenMs) > THIRTY_DAYS_MS) {
+                oldShotIds += r.id
+                oldShotBytes += sz
+            }
+            if (r.isVideo && sz >= LARGE_VIDEO_BYTES) {
+                largeVideoIds += r.id
+                largeVideoBytes += sz
+            }
         }
 
         val buckets = listOf(
@@ -144,12 +184,34 @@ object StorageAnalyzer {
             StorageBucket("Other Photos", otherBytes, otherCount, FarPalette.Green),
         ).filter { it.count > 0 || it.bytes > 0L }
 
+        val palette = listOf(FarPalette.Blue, FarPalette.Purple, FarPalette.Orange, FarPalette.Green, FarPalette.Slate)
+        val folderSlices = folderAccum.entries
+            .sortedByDescending { it.value.first }
+            .take(6)
+            .mapIndexed { idx, entry ->
+                FolderStorageSlice(
+                    folderName = entry.key,
+                    bytes = entry.value.first,
+                    count = entry.value.second,
+                    color = palette[idx % palette.size],
+                )
+            }
+
+        val suggestions = buildList {
+            if (oldShotIds.isNotEmpty()) {
+                add(CleanupSuggestion("old_shots", R.string.storage_cleanup_old_shots, oldShotBytes, oldShotIds))
+            }
+            if (largeVideoIds.isNotEmpty()) {
+                add(CleanupSuggestion("large_videos", R.string.storage_cleanup_large_videos, largeVideoBytes, largeVideoIds))
+            }
+        }
+
         val total = buckets.sumOf { it.bytes }
         val largest = rows
             .filter { it.sizeBytes >= minLargeBytes }
             .filter { categoryFilter == StorageCategoryFilter.All || categoryOf(it) == categoryFilter }
             .sortedByDescending { it.sizeBytes }
-        return StorageSummary(total, rows.size, buckets, largest)
+        return StorageSummary(total, rows.size, buckets, largest, folderSlices, suggestions)
     }
 }
 
@@ -170,7 +232,10 @@ fun StorageAnalyzerScreen(
     }
 
     val semantic = LocalSemanticColors.current
-    val chosenUris = summary.largeFiles.filter { selectedIds[it.id] == true }.map { it.uri }
+    val rowsById = remember(rows) { rows.associateBy { it.id } }
+    val chosenRows = selectedIds.filterValues { it }.keys.mapNotNull { rowsById[it] }
+    val chosenUris = chosenRows.map { it.uri }
+    val chosenBytes = chosenRows.sumOf { it.sizeBytes.coerceAtLeast(0L) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -192,19 +257,30 @@ fun StorageAnalyzerScreen(
                         .fillMaxWidth()
                         .navigationBarsPadding(),
                 ) {
-                    Button(
-                        onClick = {
-                            onTrash(chosenUris)
-                            selectedIds.clear()
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                        modifier = Modifier
+                    Column(
+                        Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = FarSpacing.screenPadding, vertical = 12.dp)
-                            .defaultMinSize(minHeight = 48.dp)
-                            .testTag("storage_trash_selected_button"),
+                            .padding(horizontal = FarSpacing.screenPadding, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        Text(stringResource(R.string.storage_trash_selected, chosenUris.size))
+                        Text(
+                            stringResource(R.string.storage_cleanup_reclaimable, Formatter.formatFileSize(ctx, chosenBytes)),
+                            style = MaterialTheme.typography.labelMedium.copy(fontFamily = MonoFont),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Button(
+                            onClick = {
+                                onTrash(chosenUris)
+                                selectedIds.clear()
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .defaultMinSize(minHeight = 48.dp)
+                                .testTag("storage_trash_selected_button"),
+                        ) {
+                            Text(stringResource(R.string.storage_trash_selected, chosenUris.size))
+                        }
                     }
                 }
             }
@@ -269,6 +345,95 @@ fun StorageAnalyzerScreen(
                                 )
                             }
                         }
+                    }
+                }
+            }
+
+            if (summary.folderSlices.isNotEmpty() && summary.totalBytes > 0L) {
+                item {
+                    CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .background(semantic.elevatedSurface, RoundedCornerShape(22.dp))
+                                .border(0.75.dp, semantic.cardBorder, RoundedCornerShape(22.dp))
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Text(
+                                stringResource(R.string.storage_treemap_title),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            summary.folderSlices.chunked(2).forEach { pair ->
+                                Row(
+                                    Modifier.fillMaxWidth().height(64.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    pair.forEach { slice ->
+                                        val weight = (slice.bytes.toFloat() / summary.totalBytes.toFloat()).coerceIn(0.25f, 1f)
+                                        Column(
+                                            Modifier
+                                                .weight(weight)
+                                                .fillMaxHeight()
+                                                .clip(RoundedCornerShape(14.dp))
+                                                .background(slice.color.copy(alpha = 0.16f))
+                                                .border(0.75.dp, slice.color.copy(alpha = 0.45f), RoundedCornerShape(14.dp))
+                                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                                            verticalArrangement = Arrangement.SpaceBetween,
+                                        ) {
+                                            Text(
+                                                slice.folderName,
+                                                style = MaterialTheme.typography.labelMedium,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                            Text(
+                                                "${slice.count} · ${Formatter.formatShortFileSize(ctx, slice.bytes)}",
+                                                style = MaterialTheme.typography.labelSmall.copy(fontFamily = MonoFont),
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (summary.suggestions.isNotEmpty()) {
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            stringResource(R.string.storage_cleanup_suggestions),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(summary.suggestions, key = { it.id }) { sug ->
+                                val active = sug.itemIds.isNotEmpty() && sug.itemIds.all { selectedIds[it] == true }
+                                FarFilterPill(
+                                    label = "${stringResource(sug.labelRes)} · ${Formatter.formatShortFileSize(ctx, sug.bytes)}",
+                                    selected = active,
+                                    onClick = {
+                                        if (active) {
+                                            sug.itemIds.forEach { selectedIds.remove(it) }
+                                        } else {
+                                            sug.itemIds.forEach { selectedIds[it] = true }
+                                        }
+                                    },
+                                    modifier = Modifier.testTag("storage_suggestion_${sug.id}"),
+                                )
+                            }
+                        }
+                        Text(
+                            stringResource(R.string.storage_private_cache_note),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }

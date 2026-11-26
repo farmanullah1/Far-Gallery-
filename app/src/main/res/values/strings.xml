@@ -553,4 +553,30 @@
     <string name="picker_choose_multi">Select up to %1$d item(s) to return</string>
     <string name="settings_oem_limits_title">System &amp; OEM hardware limits</string>
     <string name="settings_oem_limits_body">Android has no universal system gallery role. Lock-screen camera launch, power-button double press, and dedicated shutter keys are controlled by your device manufacturer and OS and cannot be overridden by third-party apps. Volume keys work as a shutter while Far Camera or Far Gallery is open.</string>
+
+    <!-- Blur/Burst Review (P23), Storage Treemap (P36) & Sanitized Diagnostics Preview (P47) -->
+    <string name="dup_tab_exact">Exact Copies</string>
+    <string name="dup_tab_bursts">Burst Stacks</string>
+    <string name="dup_tab_blurry">Blurry Photos</string>
+    <string name="dup_blurry_scanning">Checking photo sharpness (%1$d of %2$d)…</string>
+    <string name="dup_blurry_summary">%1$d blurry candidate(s) · %2$s reclaimable</string>
+    <string name="dup_blurry_score">Sharpness %1$.0f · Low edge detail</string>
+    <string name="dup_blurry_empty_title">No blurry photos found</string>
+    <string name="dup_blurry_empty_body">Sampled photos look sharp. Favorites and album photos are always kept safe.</string>
+    <string name="dup_burst_count">%1$d frames · Best frame suggested</string>
+    <string name="dup_burst_best">Best frame</string>
+    <string name="dup_burst_empty_title">No burst sequences</string>
+    <string name="dup_burst_empty_body">Rapid consecutive shots taken within seconds will group here.</string>
+    <string name="storage_treemap_title">Folder Treemap</string>
+    <string name="storage_cleanup_suggestions">Tidy Suggestions</string>
+    <string name="storage_cleanup_old_shots">Old Screenshots (&gt;30d)</string>
+    <string name="storage_cleanup_large_videos">Large Videos (&gt;25 MB)</string>
+    <string name="storage_cleanup_reclaimable">Reclaimable: %1$s</string>
+    <string name="storage_private_cache_note">Android isolates other apps\' private cache; review and trash only your own files here.</string>
+    <string name="diagnostics_preview">Preview &amp; export</string>
+    <string name="diagnostics_preview_title">Sanitized Diagnostics Preview</string>
+    <string name="diagnostics_preview_note">Local only — zero filenames, URIs, GPS coordinates, OCR text, or Vault data.</string>
+    <string name="diagnostics_save_local">Save .txt file</string>
+    <string name="diagnostics_saved_local">Saved diagnostics report to Downloads/Far Gallery</string>
+    <string name="diagnostics_save_failed">Couldn\'t save diagnostics file</string>
 </resources>
