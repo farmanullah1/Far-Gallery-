@@ -237,6 +237,8 @@ fun StorageAnalyzerScreen(
     val chosenUris = chosenRows.map { it.uri }
     val chosenBytes = chosenRows.sumOf { it.sizeBytes.coerceAtLeast(0L) }
 
+    var cardMode by remember { mutableStateOf(0) } // 0=Breakdown, 1=Treemap, 2=Tidy
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets.navigationBars,
@@ -287,8 +289,8 @@ fun StorageAnalyzerScreen(
         },
     ) { innerPadding ->
         LazyColumn(
-            contentPadding = PaddingValues(horizontal = FarSpacing.screenPadding, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(horizontal = FarSpacing.screenPadding, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
@@ -300,140 +302,144 @@ fun StorageAnalyzerScreen(
                             .fillMaxWidth()
                             .background(semantic.elevatedSurface, RoundedCornerShape(22.dp))
                             .border(0.75.dp, semantic.cardBorder, RoundedCornerShape(22.dp))
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        Text(
-                            stringResource(R.string.storage_breakdown),
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                        if (summary.totalBytes > 0L) {
-                            Row(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .height(14.dp)
-                                    .clip(RoundedCornerShape(7.dp))
-                                    .background(MaterialTheme.colorScheme.surface),
-                                horizontalArrangement = Arrangement.spacedBy(2.dp),
-                            ) {
-                                summary.buckets.forEach { b ->
-                                    val weight = (b.bytes.toFloat() / summary.totalBytes.toFloat()).coerceAtLeast(0.03f)
-                                    Box(
-                                        Modifier
-                                            .weight(weight)
-                                            .fillMaxHeight()
-                                            .background(b.color)
+                        LazyRow(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            item {
+                                FarFilterPill(
+                                    label = stringResource(R.string.storage_breakdown),
+                                    selected = cardMode == 0,
+                                    onClick = { cardMode = 0 },
+                                    modifier = Modifier.testTag("storage_mode_breakdown"),
+                                )
+                            }
+                            if (summary.folderSlices.isNotEmpty()) {
+                                item {
+                                    FarFilterPill(
+                                        label = stringResource(R.string.storage_treemap_title),
+                                        selected = cardMode == 1,
+                                        onClick = { cardMode = 1 },
+                                        modifier = Modifier.testTag("storage_mode_treemap"),
+                                    )
+                                }
+                            }
+                            if (summary.suggestions.isNotEmpty()) {
+                                item {
+                                    FarFilterPill(
+                                        label = stringResource(R.string.storage_cleanup_suggestions),
+                                        selected = cardMode == 2,
+                                        onClick = { cardMode = 2 },
+                                        modifier = Modifier.testTag("storage_mode_tidy"),
                                     )
                                 }
                             }
                         }
-                        summary.buckets.forEach { b ->
-                            Row(
-                                Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Box(Modifier.size(10.dp).background(b.color, CircleShape))
-                                    Text("${b.label} (${b.count})", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
-                                }
-                                Text(
-                                    Formatter.formatFileSize(ctx, b.bytes),
-                                    style = MaterialTheme.typography.labelMedium.copy(fontFamily = MonoFont),
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (summary.folderSlices.isNotEmpty() && summary.totalBytes > 0L) {
-                item {
-                    CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
-                        Column(
-                            Modifier
-                                .fillMaxWidth()
-                                .background(semantic.elevatedSurface, RoundedCornerShape(22.dp))
-                                .border(0.75.dp, semantic.cardBorder, RoundedCornerShape(22.dp))
-                                .padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            Text(
-                                stringResource(R.string.storage_treemap_title),
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onSurface,
-                            )
-                            summary.folderSlices.chunked(2).forEach { pair ->
-                                Row(
-                                    Modifier.fillMaxWidth().height(64.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                ) {
-                                    pair.forEach { slice ->
-                                        val weight = (slice.bytes.toFloat() / summary.totalBytes.toFloat()).coerceIn(0.25f, 1f)
-                                        Column(
-                                            Modifier
-                                                .weight(weight)
-                                                .fillMaxHeight()
-                                                .clip(RoundedCornerShape(14.dp))
-                                                .background(slice.color.copy(alpha = 0.16f))
-                                                .border(0.75.dp, slice.color.copy(alpha = 0.45f), RoundedCornerShape(14.dp))
-                                                .padding(horizontal = 10.dp, vertical = 8.dp),
-                                            verticalArrangement = Arrangement.SpaceBetween,
-                                        ) {
-                                            Text(
-                                                slice.folderName,
-                                                style = MaterialTheme.typography.labelMedium,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis,
-                                            )
-                                            Text(
-                                                "${slice.count} · ${Formatter.formatShortFileSize(ctx, slice.bytes)}",
-                                                style = MaterialTheme.typography.labelSmall.copy(fontFamily = MonoFont),
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis,
-                                            )
+                        when (cardMode) {
+                            1 -> if (summary.totalBytes > 0L) {
+                                summary.folderSlices.chunked(2).forEach { pair ->
+                                    Row(
+                                        Modifier.fillMaxWidth().height(60.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    ) {
+                                        pair.forEach { slice ->
+                                            val weight = (slice.bytes.toFloat() / summary.totalBytes.toFloat()).coerceIn(0.25f, 1f)
+                                            Column(
+                                                Modifier
+                                                    .weight(weight)
+                                                    .fillMaxHeight()
+                                                    .clip(RoundedCornerShape(14.dp))
+                                                    .background(slice.color.copy(alpha = 0.16f))
+                                                    .border(0.75.dp, slice.color.copy(alpha = 0.45f), RoundedCornerShape(14.dp))
+                                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                                                verticalArrangement = Arrangement.SpaceBetween,
+                                            ) {
+                                                Text(
+                                                    slice.folderName,
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                )
+                                                Text(
+                                                    "${slice.count} · ${Formatter.formatShortFileSize(ctx, slice.bytes)}",
+                                                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = MonoFont),
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                )
+                                            }
                                         }
                                     }
                                 }
                             }
-                        }
-                    }
-                }
-            }
-
-            if (summary.suggestions.isNotEmpty()) {
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            stringResource(R.string.storage_cleanup_suggestions),
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(summary.suggestions, key = { it.id }) { sug ->
-                                val active = sug.itemIds.isNotEmpty() && sug.itemIds.all { selectedIds[it] == true }
-                                FarFilterPill(
-                                    label = "${stringResource(sug.labelRes)} · ${Formatter.formatShortFileSize(ctx, sug.bytes)}",
-                                    selected = active,
-                                    onClick = {
-                                        if (active) {
-                                            sug.itemIds.forEach { selectedIds.remove(it) }
-                                        } else {
-                                            sug.itemIds.forEach { selectedIds[it] = true }
-                                        }
-                                    },
-                                    modifier = Modifier.testTag("storage_suggestion_${sug.id}"),
+                            2 -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    items(summary.suggestions, key = { it.id }) { sug ->
+                                        val active = sug.itemIds.isNotEmpty() && sug.itemIds.all { selectedIds[it] == true }
+                                        FarFilterPill(
+                                            label = "${stringResource(sug.labelRes)} · ${Formatter.formatShortFileSize(ctx, sug.bytes)}",
+                                            selected = active,
+                                            onClick = {
+                                                if (active) {
+                                                    sug.itemIds.forEach { selectedIds.remove(it) }
+                                                } else {
+                                                    sug.itemIds.forEach { selectedIds[it] = true }
+                                                }
+                                            },
+                                            modifier = Modifier.testTag("storage_suggestion_${sug.id}"),
+                                        )
+                                    }
+                                }
+                                Text(
+                                    stringResource(R.string.storage_private_cache_note),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
+                            else -> {
+                                if (summary.totalBytes > 0L) {
+                                    Row(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .height(14.dp)
+                                            .clip(RoundedCornerShape(7.dp))
+                                            .background(MaterialTheme.colorScheme.surface),
+                                        horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                    ) {
+                                        summary.buckets.forEach { b ->
+                                            val weight = (b.bytes.toFloat() / summary.totalBytes.toFloat()).coerceAtLeast(0.03f)
+                                            Box(
+                                                Modifier
+                                                    .weight(weight)
+                                                    .fillMaxHeight()
+                                                    .background(b.color)
+                                            )
+                                        }
+                                    }
+                                }
+                                summary.buckets.forEach { b ->
+                                    Row(
+                                        Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            Box(Modifier.size(10.dp).background(b.color, CircleShape))
+                                            Text("${b.label} (${b.count})", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
+                                        }
+                                        Text(
+                                            Formatter.formatFileSize(ctx, b.bytes),
+                                            style = MaterialTheme.typography.labelMedium.copy(fontFamily = MonoFont),
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                            }
                         }
-                        Text(
-                            stringResource(R.string.storage_private_cache_note),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
                     }
                 }
             }
