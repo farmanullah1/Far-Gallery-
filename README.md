@@ -1,5 +1,7 @@
 # Far Gallery
 
+**Implementation stance:** see `CAMPAIGN_AUTHORITY.md` for the authoritative source/decision record for this campaign, including the canonical app package and the current definitive camera modes.
+
 Offline-first Android Gallery, Camera, and File Manager built with Kotlin, Jetpack Compose, Material 3, Room, CameraX, Media3, and bundled on-device ML Kit.
 
 ## Highlights

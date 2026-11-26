@@ -68,8 +68,8 @@ inline fun <T> farCatching(block: () -> T): FarResult<T> = try {
     }
 } catch (_: IllegalStateException) {
     FarResult.Err(FarError.ProviderUnavailable())
-} catch (_: IllegalArgumentException) {
-    FarResult.Err(FarError.InvalidInput("bad argument"))
+} catch (e: IllegalArgumentException) {
+    FarResult.Err(FarError.InvalidInput(e.message ?: "unsupported uri scheme"))
 } catch (_: RuntimeException) {
     FarResult.Err(FarError.Unknown())
 }
@@ -77,6 +77,7 @@ inline fun <T> farCatching(block: () -> T): FarResult<T> = try {
 /** Privacy-safe local crash & error log utilities (no file names, URIs, GPS, or OCR text). */
 object LocalDiagnostics {
     private const val MAX_LOG_LINES = 30
+    private const val DIAGNOSTICS_EXPORT_PREFIX = "far_diagnostics_"
 
     fun readLastCrash(ctx: Context): String? {
         val f = File(ctx.filesDir, "last_crash.txt")
@@ -127,7 +128,7 @@ object LocalDiagnostics {
     /** Saves the sanitized report strictly locally into Downloads/Far Gallery (never uploaded). */
     fun exportToDownloads(ctx: Context): FarResult<String> = farCatching {
         val reportText = buildReport(ctx)
-        val fileName = "far_diagnostics_${System.currentTimeMillis()}.txt"
+        val fileName = "${DIAGNOSTICS_EXPORT_PREFIX}${System.currentTimeMillis()}.txt"
         val resolver = ctx.contentResolver
         val values = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, fileName)
@@ -246,7 +247,7 @@ class IncomingMediaResolver(private val resolver: ContentResolver, private val m
 
     private val allowedActions = setOf(Intent.ACTION_VIEW, Intent.ACTION_SEND, Intent.ACTION_SEND_MULTIPLE)
 
-    /** Call from a background dispatcher; never from the main thread. */
+        /** Call from a background dispatcher; never from the main thread. */
     fun resolve(intent: Intent): IncomingResult {
         if (intent.action !in allowedActions) {
             return IncomingResult(emptyList(), listOf(null to FarError.InvalidInput("unsupported action")))
@@ -261,6 +262,7 @@ class IncomingMediaResolver(private val resolver: ContentResolver, private val m
             for (i in 0 until clip.itemCount) clip.getItemAt(i).uri?.let(uris::add)
         }
 
+
         val accepted = ArrayList<IncomingItem>()
         val rejected = ArrayList<Pair<Uri?, FarError>>()
         for (uri in uris.take(maxItems)) {
@@ -272,6 +274,9 @@ class IncomingMediaResolver(private val resolver: ContentResolver, private val m
         if (uris.size > maxItems) rejected += null to FarError.InvalidInput("too many items (max $maxItems)")
         return IncomingResult(accepted, rejected)
     }
+
+    /** Verify that we can meaningfully reason about this URI before accepting it. */
+    internal fun canRead(uri: Uri): Boolean = runCatching { peekMediaType(uri); true }.isSuccess
 
     private fun inspect(uri: Uri): IncomingItem {
         val scheme = uri.scheme
@@ -293,8 +298,12 @@ class IncomingMediaResolver(private val resolver: ContentResolver, private val m
                 name = file.name
                 size = file.length()
             }
-            else -> throw IllegalArgumentException("unsupported uri scheme")
+            else -> {
+                val reason = "incoming uri scheme '${scheme}' is not supported"
+                throw IllegalArgumentException(reason)
+            }
         }
+        val peeked = peekMediaType(uri)
         val declared = if (scheme == ContentResolver.SCHEME_CONTENT) resolver.getType(uri) else null
         val header = ByteArray(32)
         val read = resolver.openInputStream(uri)?.use { it.read(header) } ?: throw FileNotFoundException()
@@ -308,6 +317,26 @@ class IncomingMediaResolver(private val resolver: ContentResolver, private val m
         }
         return IncomingItem(uri, name, size, declared, sniffed, mismatch)
     }
+
+    internal fun peekMediaType(uri: Uri): IncomingItem? = runCatching {
+        val scheme = uri.scheme
+        val header = ByteArray(32)
+        val read = when (scheme) {
+            ContentResolver.SCHEME_CONTENT -> resolver.openInputStream(uri)?.use { it.read(header) } ?: -1
+            ContentResolver.SCHEME_FILE -> {
+                val file = uri.path?.let(::File)?.canonicalFile
+                    ?.takeIf { it.isFile && it.canRead() }
+                    ?: return@runCatching null
+                file.inputStream().use { it.read(header) }
+            }
+            else -> return@runCatching null
+        }
+        if (read < 0) return@runCatching null
+        val sniffed = read.takeIf { 0 < it }?.let { sniffMime(header, it) }
+        return if (sniffed != null && (sniffed.startsWith("image/") || sniffed.startsWith("video/"))) {
+            IncomingItem(uri, null, null, null, sniffed, false)
+        } else null
+    }.getOrNull()
 
     fun sniffMime(b: ByteArray, n: Int): String? {
         fun at(i: Int, vararg v: Int) = n > i + v.size - 1 && v.indices.all { (b[i + it].toInt() and 0xFF) == v[it] }
