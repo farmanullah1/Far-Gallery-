@@ -268,6 +268,8 @@ class RoadmapUpgradesTest {
             authority = "${app.packageName}.documents"
             exported = true
             grantUriPermissions = true
+            readPermission = android.Manifest.permission.MANAGE_DOCUMENTS
+            writePermission = android.Manifest.permission.MANAGE_DOCUMENTS
         }
         val provider = Robolectric.buildContentProvider(FarDocumentsProvider::class.java)
             .create(info)
